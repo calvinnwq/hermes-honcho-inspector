@@ -91,7 +91,7 @@ def _has_explicit_self_hosted_auth(config: object) -> bool:
     if not isinstance(hosts, dict):
         return False
     host_config = hosts.get(host)
-    if not isinstance(host_config, dict) and host.startswith("hermes_"):
+    if not host_config and host.startswith("hermes_"):
         host_config = hosts.get(f"hermes.{host.removeprefix('hermes_')}")
     return isinstance(host_config, dict) and bool(host_config.get("apiKey"))
 

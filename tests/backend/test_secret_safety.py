@@ -129,6 +129,35 @@ def test_explicit_host_auth_key_is_sent_only_to_its_self_hosted_target(
     assert SECRET not in response.text
 
 
+def test_empty_profile_block_falls_back_to_legacy_host_auth(
+    monkeypatch: Any,
+) -> None:
+    install_config_module(
+        monkeypatch,
+        SimpleNamespace(
+            host="hermes_local",
+            enabled=True,
+            explicitly_configured=True,
+            workspace_id="synthetic-workspace",
+            api_key=SECRET,
+            base_url=PRIVATE_URL,
+            environment="local",
+            timeout=3.0,
+            raw={
+                "hosts": {
+                    "hermes_local": {},
+                    "hermes.local": {"apiKey": SECRET},
+                }
+            },
+        ),
+    )
+
+    connection = plugin_api.resolve_connection()
+
+    assert isinstance(connection, plugin_api._Connection)
+    assert connection.headers == {"Authorization": f"Bearer {SECRET}"}
+
+
 def test_secret_bearing_transport_error_is_not_returned_or_logged(
     monkeypatch: Any,
     caplog: Any,
