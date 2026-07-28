@@ -2,4 +2,4 @@
 
 
 def register(ctx) -> None:
-    """Register no agent-facing capabilities in the Slice 0 scaffold."""
+    """Keep the agent-facing plugin entry point inert."""

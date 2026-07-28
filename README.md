@@ -1,9 +1,12 @@
 # Honcho Inspector for Hermes
 
-Honcho Inspector is a planned read-only Hermes Desktop plugin for inspecting Honcho health, remembered content, attribution, session context, and evidence gaps.
+Honcho Inspector is a read-only Hermes plugin project for inspecting Honcho health, remembered content, attribution, session context, and evidence gaps.
 
-The repository currently ships **Slice 0 only**: a tested plugin identity, the two Hermes installation trees, an inert Desktop entry, an empty backend router, compatibility metadata, and deterministic release tooling.
-It does not connect to Honcho or provide product UI yet.
+The repository currently implements **Slice 1**: the reviewed Slice 0 repository and release foundation plus a narrow backend connection handshake.
+`GET /capabilities` resolves the active Hermes profile's Honcho configuration server-side, performs only a fixed direct-HTTP `GET /health` probe, and returns a normalized secret-free capability state.
+Slice 1 reports `supported_contract` as static project support metadata and `contract_verified: false`; the unversioned health response proves reachability only and does not verify the Honcho API version.
+The Desktop entry remains inert.
+Slice 1 does not inspect memory records, expose product UI, or provide any renderer-controlled transport behavior.
 
 ## Product boundary
 
@@ -27,7 +30,7 @@ Hermes Desktop plugin
 The Desktop and backend components live in one repository, version, and release because they form one product and one security boundary.
 Hermes Desktop plugins are trusted unsandboxed local code, so releases must remain deterministic and source-reviewable.
 
-## Slice 0 verification
+## Slice 1 verification
 
 Requirements:
 
