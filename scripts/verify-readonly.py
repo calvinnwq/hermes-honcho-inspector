@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the exact inert runtime contract for the Slice 0 scaffold."""
+"""Verify the exact read-only runtime contract for the Slice 1 handshake."""
 
 import ast
 import hashlib
@@ -23,6 +23,7 @@ const plugin = {
 export default plugin
 '''
 DESKTOP_BUNDLE_SHA256 = "9d03b6d9bf00800b4a8f45d4efbe5d2c24693fe06d44e08bd606d15a35750e42"
+DASHBOARD_SOURCE_SHA256 = "cd09e404fb298d13be753730caf175e2c9610250d9401a7006c64578e11b863f"
 
 
 def fail(message: str) -> NoReturn:
@@ -74,33 +75,83 @@ def verify_general_plugin() -> None:
 
 
 def verify_dashboard_plugin() -> None:
-    tree = ast.parse(read_text("dashboard/plugin_api.py"))
-    if len(tree.body) != 3 or not is_docstring(tree.body[0]):
-        fail("dashboard backend must contain only its docstring, APIRouter import, and empty router")
+    source = read_text("dashboard/plugin_api.py")
+    if hashlib.sha256(source.encode("utf-8")).hexdigest() != DASHBOARD_SOURCE_SHA256:
+        fail("dashboard backend differs from the approved Slice 1 handshake")
 
-    import_statement = tree.body[1]
-    assignment = tree.body[2]
-    valid_import = (
-        isinstance(import_statement, ast.ImportFrom)
-        and import_statement.module == "fastapi"
-        and import_statement.level == 0
-        and len(import_statement.names) == 1
-        and import_statement.names[0].name == "APIRouter"
-        and import_statement.names[0].asname is None
-    )
-    valid_assignment = (
-        isinstance(assignment, ast.Assign)
-        and len(assignment.targets) == 1
-        and isinstance(assignment.targets[0], ast.Name)
-        and assignment.targets[0].id == "router"
-        and isinstance(assignment.value, ast.Call)
-        and isinstance(assignment.value.func, ast.Name)
-        and assignment.value.func.id == "APIRouter"
-        and not assignment.value.args
-        and not assignment.value.keywords
-    )
-    if not valid_import or not valid_assignment:
-        fail("dashboard backend must expose only an empty APIRouter")
+    tree = ast.parse(source)
+    routes: list[tuple[str, str]] = []
+    health_calls = 0
+    config_imports = 0
+    forbidden_modules = {"honcho", "os", "pathlib", "requests", "socket", "subprocess"}
+    forbidden_client_methods = {
+        "delete",
+        "options",
+        "patch",
+        "post",
+        "put",
+        "request",
+        "send",
+        "stream",
+    }
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            modules = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+            )
+            if any(module.split(".", 1)[0] in forbidden_modules for module in modules):
+                fail("dashboard backend imports a forbidden runtime module")
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "plugins.memory.honcho.client"
+            ):
+                imported = [(alias.name, alias.asname) for alias in node.names]
+                if imported != [("HonchoClientConfig", None)]:
+                    fail("dashboard backend may import only HonchoClientConfig")
+                config_imports += 1
+
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                if (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and isinstance(decorator.func.value, ast.Name)
+                    and decorator.func.value.id == "router"
+                ):
+                    if (
+                        len(decorator.args) != 1
+                        or not isinstance(decorator.args[0], ast.Constant)
+                        or not isinstance(decorator.args[0].value, str)
+                    ):
+                        fail("dashboard route path must be a fixed string")
+                    routes.append((decorator.func.attr, decorator.args[0].value))
+
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in forbidden_client_methods:
+                fail("dashboard backend contains a forbidden HTTP client method")
+            if (
+                node.func.attr == "get"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "client"
+            ):
+                if (
+                    len(node.args) != 1
+                    or not isinstance(node.args[0], ast.Constant)
+                    or node.args[0].value != "/health"
+                    or node.keywords
+                ):
+                    fail("Honcho health probe must remain a fixed GET /health")
+                health_calls += 1
+
+    if routes != [("get", "/capabilities")]:
+        fail("dashboard backend must expose only GET /capabilities")
+    if config_imports != 1:
+        fail("dashboard backend must resolve only HonchoClientConfig")
+    if health_calls != 1:
+        fail("dashboard backend must issue exactly one fixed GET /health probe")
 
 
 def verify_desktop_plugin() -> None:
@@ -119,7 +170,7 @@ def main() -> None:
     verify_general_plugin()
     verify_dashboard_plugin()
     verify_desktop_plugin()
-    print("read-only verification passed: exact inert Slice 0 runtime contract")
+    print("read-only verification passed: exact Slice 1 capability handshake")
 
 
 if __name__ == "__main__":

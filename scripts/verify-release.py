@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the exact Slice 0 release payload and its checksums."""
+"""Verify the exact Slice 1 release payload and its checksums."""
 
 from __future__ import annotations
 

@@ -34,7 +34,7 @@ def run_verifier(candidate: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_readonly_verifier_accepts_the_inert_runtime(tmp_path: Path) -> None:
+def test_readonly_verifier_accepts_the_slice_one_handshake(tmp_path: Path) -> None:
     candidate = copy_runtime(tmp_path)
 
     result = run_verifier(candidate)
@@ -108,6 +108,36 @@ def test_readonly_verifier_rejects_runtime_capabilities(
     candidate = copy_runtime(tmp_path)
     target = candidate / relative
     target.write_text(target.read_text(encoding="utf-8") + mutation, encoding="utf-8")
+    result = run_verifier(candidate)
+
+    assert result.returncode != 0
+    assert "read-only verification failed" in result.stderr + result.stdout
+
+
+@pytest.mark.parametrize(
+    ("approved", "mutation"),
+    [
+        ('@router.get("/capabilities"', '@router.post("/capabilities"'),
+        ('@router.get("/capabilities"', '@router.get("/proxy"'),
+        ('client.get("/health")', 'client.post("/health")'),
+        ('client.get("/health")', 'client.get("/v3/chat")'),
+        ("follow_redirects=False", "follow_redirects=True"),
+        (
+            "from plugins.memory.honcho.client import HonchoClientConfig",
+            "from plugins.memory.honcho.client import get_honcho_client",
+        ),
+    ],
+)
+def test_readonly_verifier_rejects_handshake_contract_drift(
+    tmp_path: Path,
+    approved: str,
+    mutation: str,
+) -> None:
+    candidate = copy_runtime(tmp_path)
+    backend = candidate / "dashboard/plugin_api.py"
+    source = backend.read_text(encoding="utf-8")
+    assert approved in source
+    backend.write_text(source.replace(approved, mutation, 1), encoding="utf-8")
 
     result = run_verifier(candidate)
 

@@ -1,8 +1,13 @@
-# Slice 0 installation status
+# Slice 1 installation status
 
 No release has been published.
-Do not install Slice 0 into a live Hermes profile.
-It is an inert repository and release-contract scaffold with no Honcho connection, backend routes, or product UI.
+Do not install Slice 1 into a live Hermes profile.
+
+Slice 1 is a backend-only connection handshake.
+It exposes fixed `GET /capabilities`, resolves Honcho configuration from the active Hermes profile, and performs only direct-HTTP `GET /health` against the resolved server-side target.
+It returns normalized capability states without credentials, raw connection details, or upstream error bodies.
+Its `supported_contract` value declares the project's static support target, while `contract_verified: false` states that the unversioned health response does not verify the Honcho API version.
+It does not inspect memory records or provide product UI, and the Desktop entry remains inert.
 
 The generated bundle exists for offline review of the intended paired layout:
 
