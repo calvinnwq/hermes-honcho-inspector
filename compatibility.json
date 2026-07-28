@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "plugin": {
+    "id": "honcho-inspector",
+    "version": "0.1.0"
+  },
+  "hermes": {
+    "minimum_release": null,
+    "development_commits": [
+      "71e7eb3c168a49fdd3179efb8a921ad78f6e8e1d",
+      "731aa0ccc9d0968bd61a0c6cee7911aa787c58b2"
+    ],
+    "status": "development-baseline-only"
+  },
+  "honcho": {
+    "openapi_contract": "3.0.11",
+    "source_commit": "3ee890fa6f55388abd23b7660fb726e14d83459d",
+    "self_hosted_smoke": "verified-read-only-feasibility",
+    "hosted_smoke": "not-run"
+  }
+}

@@ -1,0 +1,5 @@
+manifest_version: 1
+name: honcho-inspector
+version: 0.1.0
+description: Read-only Honcho inspection for Hermes Desktop
+kind: standalone

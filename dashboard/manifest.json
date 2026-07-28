@@ -1,0 +1,6 @@
+{
+  "name": "honcho-inspector",
+  "label": "Honcho Inspector",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}

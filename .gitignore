@@ -1,0 +1,10 @@
+# Generated artifacts
+dist/
+node_modules/
+.venv/
+*.egg-info/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.coverage
+.DS_Store
