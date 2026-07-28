@@ -17,4 +17,4 @@ Do not test against another person's Hermes or Honcho environment.
 
 Hermes Desktop plugins are trusted unsandboxed local code.
 Honcho Inspector must keep credentials server-side, expose only fixed local read routes, normalize responses, and ship deterministic source-reviewable artifacts.
-The Slice 0 scaffold performs no Honcho network access and registers no backend routes.
+See the [README](README.md) for the current fixed route and upstream operation.
