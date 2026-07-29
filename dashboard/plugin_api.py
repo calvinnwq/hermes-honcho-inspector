@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
-from urllib.parse import urlparse
+from datetime import datetime, timezone
+from typing import Annotated, Any, Literal
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import APIRouter
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 PLUGIN_VERSION = "0.1.0"
 HONCHO_SUPPORTED_CONTRACT = "honcho-v3.0.11"
@@ -17,6 +18,7 @@ HOSTED_BASE_URL = "https://api.honcho.dev"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 MIN_TIMEOUT_SECONDS = 1.0
 MAX_TIMEOUT_SECONDS = 30.0
+MAX_SAFE_COUNT = 9_007_199_254_740_991
 
 CapabilityState = Literal[
     "ready",
@@ -24,8 +26,16 @@ CapabilityState = Literal[
     "missing-configuration",
     "unreachable",
     "unauthorized",
+    "unsupported-contract",
 ]
 ConnectionTarget = Literal["hosted", "self-hosted", "unknown"]
+OverviewWarning = Literal[
+    "processing-pending",
+    "processing-in-progress",
+    "identity-config-missing",
+    "unsupported-contract",
+]
+SafeCount = Annotated[int, Field(strict=True, ge=0, le=MAX_SAFE_COUNT)]
 
 
 class CapabilityFeatures(BaseModel):
@@ -58,6 +68,74 @@ class CapabilityResponse(BaseModel):
     warnings: tuple[str, ...] = ()
 
 
+class OverviewQueue(BaseModel):
+    """Safe, aggregate queue counts for the Overview renderer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    total: SafeCount
+    completed: SafeCount
+    in_progress: SafeCount
+    pending: SafeCount
+
+
+class OverviewResponse(BaseModel):
+    """Public, secret-free workspace summary."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    state: CapabilityState
+    workspace_label: str | None = None
+    peer_total: SafeCount | None = None
+    session_total: SafeCount | None = None
+    conclusion_total: SafeCount | None = None
+    queue: OverviewQueue | None = None
+    observed_at: datetime
+    warnings: tuple[OverviewWarning, ...] = ()
+
+
+class _UpstreamPage(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    items: list[Any]
+    total: SafeCount
+    page: Annotated[int, Field(strict=True, ge=1)]
+    size: Annotated[int, Field(strict=True, ge=1, le=100)]
+    pages: SafeCount
+
+    @model_validator(mode="after")
+    def matches_size_one_request(self) -> _UpstreamPage:
+        expected_items = min(self.total, 1)
+        if (
+            self.page != 1
+            or self.size != 1
+            or self.pages != self.total
+            or len(self.items) != expected_items
+        ):
+            raise ValueError("pagination envelope does not match the fixed request")
+        return self
+
+
+class _UpstreamQueue(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    total_work_units: SafeCount
+    completed_work_units: SafeCount
+    in_progress_work_units: SafeCount
+    pending_work_units: SafeCount
+
+    @model_validator(mode="after")
+    def counts_are_consistent(self) -> _UpstreamQueue:
+        accounted = (
+            self.completed_work_units
+            + self.in_progress_work_units
+            + self.pending_work_units
+        )
+        if accounted != self.total_work_units:
+            raise ValueError("queue counts do not match the total")
+        return self
+
+
 @dataclass(frozen=True, slots=True)
 class _Connection:
     base_url: str
@@ -65,6 +143,7 @@ class _Connection:
     target: Literal["hosted", "self-hosted"]
     headers: dict[str, str]
     timeout: float
+    identity_configured: bool = True
 
 
 def _capability(
@@ -167,6 +246,9 @@ def resolve_connection() -> _Connection | CapabilityResponse:
         target=target,
         headers=headers,
         timeout=timeout,
+        identity_configured=bool(
+            getattr(config, "peer_name", None) and getattr(config, "ai_peer", None)
+        ),
     )
 
 
@@ -189,7 +271,7 @@ async def capabilities() -> CapabilityResponse:
             follow_redirects=False,
         ) as client:
             response = await client.get("/health")
-    except httpx.RequestError:
+    except (httpx.RequestError, httpx.InvalidURL):
         return _capability(
             "unreachable",
             workspace_label=connection.workspace_label,
@@ -213,4 +295,112 @@ async def capabilities() -> CapabilityResponse:
         "ready",
         workspace_label=connection.workspace_label,
         target=connection.target,
+    )
+
+
+def _overview_state(
+    state: CapabilityState,
+    *,
+    workspace_label: str | None = None,
+    warnings: tuple[OverviewWarning, ...] = (),
+) -> OverviewResponse:
+    return OverviewResponse(
+        state=state,
+        workspace_label=workspace_label,
+        observed_at=datetime.now(timezone.utc),
+        warnings=warnings,
+    )
+
+
+def _status_state(status_code: int) -> CapabilityState | None:
+    if status_code == 200:
+        return None
+    if status_code in {401, 403}:
+        return "unauthorized"
+    if 400 <= status_code < 500:
+        return "unsupported-contract"
+    return "unreachable"
+
+
+def _overview_failure(
+    state: CapabilityState,
+    connection: _Connection,
+) -> OverviewResponse:
+    warnings: tuple[OverviewWarning, ...] = (
+        ("unsupported-contract",) if state == "unsupported-contract" else ()
+    )
+    return _overview_state(
+        state,
+        workspace_label=connection.workspace_label,
+        warnings=warnings,
+    )
+
+
+@router.get("/overview", response_model=OverviewResponse)
+async def overview() -> OverviewResponse:
+    """Return fixed workspace aggregates without exposing upstream records."""
+
+    connection = resolve_connection()
+    if isinstance(connection, CapabilityResponse):
+        return _overview_state(connection.state)
+
+    workspace_path = quote(connection.workspace_label, safe="")
+    workspace_prefix = f"/v3/workspaces/{workspace_path}"
+
+    try:
+        async with httpx.AsyncClient(
+            base_url=connection.base_url,
+            headers=connection.headers,
+            timeout=connection.timeout,
+            follow_redirects=False,
+        ) as client:
+            health_response = await client.get("/health")
+            state = _status_state(health_response.status_code)
+            if state is not None:
+                return _overview_failure(state, connection)
+
+            queue_response = await client.get(f"{workspace_prefix}/queue/status")
+            state = _status_state(queue_response.status_code)
+            if state is not None:
+                return _overview_failure(state, connection)
+            queue = _UpstreamQueue.model_validate(queue_response.json())
+
+            totals: list[int] = []
+            for resource in ("peers", "sessions", "conclusions"):
+                page_response = await client.post(
+                    f"{workspace_prefix}/{resource}/list",
+                    params={"page": 1, "size": 1},
+                    json={},
+                )
+                state = _status_state(page_response.status_code)
+                if state is not None:
+                    return _overview_failure(state, connection)
+                totals.append(_UpstreamPage.model_validate(page_response.json()).total)
+    except (httpx.RequestError, httpx.InvalidURL):
+        return _overview_failure("unreachable", connection)
+    except (ValidationError, TypeError, ValueError):
+        return _overview_failure("unsupported-contract", connection)
+
+    warnings: list[OverviewWarning] = []
+    if queue.pending_work_units > 0:
+        warnings.append("processing-pending")
+    if queue.in_progress_work_units > 0:
+        warnings.append("processing-in-progress")
+    if not connection.identity_configured:
+        warnings.append("identity-config-missing")
+
+    return OverviewResponse(
+        state="ready",
+        workspace_label=connection.workspace_label,
+        peer_total=totals[0],
+        session_total=totals[1],
+        conclusion_total=totals[2],
+        queue=OverviewQueue(
+            total=queue.total_work_units,
+            completed=queue.completed_work_units,
+            in_progress=queue.in_progress_work_units,
+            pending=queue.pending_work_units,
+        ),
+        observed_at=datetime.now(timezone.utc),
+        warnings=tuple(warnings),
     )

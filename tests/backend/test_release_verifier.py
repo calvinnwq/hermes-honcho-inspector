@@ -18,6 +18,7 @@ BUILD_INPUTS = (
     "dashboard/manifest.json",
     "dashboard/plugin_api.py",
     "desktop/plugin.ts",
+    "desktop/overview-model.ts",
     "INSTALL.md",
     "LICENSE",
     "compatibility.json",

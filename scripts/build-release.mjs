@@ -78,6 +78,7 @@ await build({
   legalComments: "none",
   sourcemap: false,
   treeShaking: true,
+  external: ["@hermes/plugin-sdk", "react", "react/jsx-runtime"],
   logLevel: "silent"
 })
 

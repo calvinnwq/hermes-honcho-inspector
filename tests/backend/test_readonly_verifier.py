@@ -11,6 +11,7 @@ RUNTIME_FILES = (
     "__init__.py",
     "dashboard/plugin_api.py",
     "desktop/plugin.ts",
+    "desktop/overview-model.ts",
     "dist/desktop-plugins/honcho-inspector/plugin.js",
 )
 
@@ -34,7 +35,7 @@ def run_verifier(candidate: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_readonly_verifier_accepts_the_slice_one_handshake(tmp_path: Path) -> None:
+def test_readonly_verifier_accepts_the_slice_two_overview(tmp_path: Path) -> None:
     candidate = copy_runtime(tmp_path)
 
     result = run_verifier(candidate)
@@ -115,29 +116,71 @@ def test_readonly_verifier_rejects_runtime_capabilities(
 
 
 @pytest.mark.parametrize(
-    ("approved", "mutation"),
+    ("relative", "approved", "mutation"),
     [
-        ('@router.get("/capabilities"', '@router.post("/capabilities"'),
-        ('@router.get("/capabilities"', '@router.get("/proxy"'),
-        ('client.get("/health")', 'client.post("/health")'),
-        ('client.get("/health")', 'client.get("/v3/chat")'),
-        ("follow_redirects=False", "follow_redirects=True"),
         (
+            "dashboard/plugin_api.py",
+            '@router.get("/capabilities"',
+            '@router.post("/capabilities"',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            '@router.get("/overview"',
+            '@router.get("/proxy"',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            'client.get("/health")',
+            'client.post("/health")',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            'client.get(f"{workspace_prefix}/queue/status")',
+            'client.get("/v3/chat")',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            '("peers", "sessions", "conclusions")',
+            '("peers", "sessions", "conclusions", "messages")',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            'params={"page": 1, "size": 1}',
+            'params={"page": 1, "size": 100}',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            "follow_redirects=False",
+            "follow_redirects=True",
+        ),
+        (
+            "dashboard/plugin_api.py",
             "from plugins.memory.honcho.client import HonchoClientConfig",
             "from plugins.memory.honcho.client import get_honcho_client",
         ),
+        (
+            "desktop/plugin.ts",
+            'ctx.rest<unknown>("/overview")',
+            'ctx.rest<unknown>("/proxy")',
+        ),
+        (
+            "desktop/plugin.ts",
+            'queryKey: [PLUGIN_ID, "overview", profile]',
+            'queryKey: [PLUGIN_ID, "overview"]',
+        ),
     ],
 )
-def test_readonly_verifier_rejects_handshake_contract_drift(
+def test_readonly_verifier_rejects_runtime_contract_drift(
     tmp_path: Path,
+    relative: str,
     approved: str,
     mutation: str,
 ) -> None:
     candidate = copy_runtime(tmp_path)
-    backend = candidate / "dashboard/plugin_api.py"
-    source = backend.read_text(encoding="utf-8")
+    target = candidate / relative
+    source = target.read_text(encoding="utf-8")
     assert approved in source
-    backend.write_text(source.replace(approved, mutation, 1), encoding="utf-8")
+    target.write_text(source.replace(approved, mutation, 1), encoding="utf-8")
 
     result = run_verifier(candidate)
 
