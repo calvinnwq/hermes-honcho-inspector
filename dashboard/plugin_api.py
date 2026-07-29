@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,7 +33,6 @@ ConnectionTarget = Literal["hosted", "self-hosted", "unknown"]
 OverviewWarning = Literal[
     "processing-pending",
     "processing-in-progress",
-    "identity-config-missing",
     "unsupported-contract",
 ]
 SafeCount = Annotated[int, Field(strict=True, ge=0, le=MAX_SAFE_COUNT)]
@@ -143,7 +143,6 @@ class _Connection:
     target: Literal["hosted", "self-hosted"]
     headers: dict[str, str]
     timeout: float
-    identity_configured: bool = True
 
 
 def _capability(
@@ -198,7 +197,11 @@ def resolve_connection() -> _Connection | CapabilityResponse:
         api_key = getattr(config, "api_key", None)
         configured_base_url = str(getattr(config, "base_url", "") or "").strip()
         environment = str(getattr(config, "environment", "production")).strip().lower()
-        if not workspace_label or (not configured_base_url and not api_key):
+        if (
+            not workspace_label
+            or workspace_label in {".", ".."}
+            or (not configured_base_url and not api_key)
+        ):
             return _capability("missing-configuration")
         if not configured_base_url and environment != "production":
             return _capability("missing-configuration")
@@ -246,9 +249,6 @@ def resolve_connection() -> _Connection | CapabilityResponse:
         target=target,
         headers=headers,
         timeout=timeout,
-        identity_configured=bool(
-            getattr(config, "peer_name", None) and getattr(config, "ai_peer", None)
-        ),
     )
 
 
@@ -317,6 +317,8 @@ def _status_state(status_code: int) -> CapabilityState | None:
         return None
     if status_code in {401, 403}:
         return "unauthorized"
+    if status_code in {408, 425, 429}:
+        return "unreachable"
     if 400 <= status_code < 500:
         return "unsupported-contract"
     return "unreachable"
@@ -354,28 +356,34 @@ async def overview() -> OverviewResponse:
             timeout=connection.timeout,
             follow_redirects=False,
         ) as client:
-            health_response = await client.get("/health")
-            state = _status_state(health_response.status_code)
-            if state is not None:
-                return _overview_failure(state, connection)
-
-            queue_response = await client.get(f"{workspace_prefix}/queue/status")
-            state = _status_state(queue_response.status_code)
-            if state is not None:
-                return _overview_failure(state, connection)
+            health_response, queue_response = await asyncio.gather(
+                client.get("/health"),
+                client.get(f"{workspace_prefix}/queue/status"),
+            )
+            for initial_response in (health_response, queue_response):
+                state = _status_state(initial_response.status_code)
+                if state is not None:
+                    return _overview_failure(state, connection)
             queue = _UpstreamQueue.model_validate(queue_response.json())
 
-            totals: list[int] = []
+            list_requests = []
             for resource in ("peers", "sessions", "conclusions"):
-                page_response = await client.post(
-                    f"{workspace_prefix}/{resource}/list",
-                    params={"page": 1, "size": 1},
-                    json={},
+                list_requests.append(
+                    client.post(
+                        f"{workspace_prefix}/{resource}/list",
+                        params={"page": 1, "size": 1},
+                        json={},
+                    )
                 )
+            page_responses = await asyncio.gather(*list_requests)
+            for page_response in page_responses:
                 state = _status_state(page_response.status_code)
                 if state is not None:
                     return _overview_failure(state, connection)
-                totals.append(_UpstreamPage.model_validate(page_response.json()).total)
+            totals = [
+                _UpstreamPage.model_validate(response.json()).total
+                for response in page_responses
+            ]
     except (httpx.RequestError, httpx.InvalidURL):
         return _overview_failure("unreachable", connection)
     except (ValidationError, TypeError, ValueError):
@@ -386,8 +394,6 @@ async def overview() -> OverviewResponse:
         warnings.append("processing-pending")
     if queue.in_progress_work_units > 0:
         warnings.append("processing-in-progress")
-    if not connection.identity_configured:
-        warnings.append("identity-config-missing")
 
     return OverviewResponse(
         state="ready",

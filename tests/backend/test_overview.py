@@ -1,4 +1,6 @@
+import asyncio
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -7,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from dashboard import plugin_api
+from _support import install_config_module
 
 
 PRIVATE_ITEM = "synthetic-private-item-payload"
@@ -174,6 +177,98 @@ def test_overview_returns_connection_state_without_network(monkeypatch: Any) -> 
     assert datetime.fromisoformat(body["observed_at"]).tzinfo is not None
 
 
+def test_overview_uses_runtime_identity_and_concurrent_aggregate_reads(
+    monkeypatch: Any,
+) -> None:
+    install_config_module(
+        monkeypatch,
+        SimpleNamespace(
+            host="hermes",
+            enabled=True,
+            explicitly_configured=True,
+            workspace_id="synthetic-workspace",
+            api_key=None,
+            base_url="https://honcho.example.invalid",
+            environment="local",
+            timeout=3.0,
+            raw={},
+        ),
+    )
+    connection = plugin_api.resolve_connection()
+    assert isinstance(connection, plugin_api._Connection)
+    monkeypatch.setattr(plugin_api, "resolve_connection", lambda: connection)
+
+    class ConcurrentClient:
+        def __init__(self, **_options: Any) -> None:
+            self.initial_started = 0
+            self.all_initial_started = asyncio.Event()
+            self.lists_started = 0
+            self.all_lists_started = asyncio.Event()
+
+        async def __aenter__(self) -> "ConcurrentClient":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def response(
+            self,
+            method: str,
+            path: str,
+            payload: dict[str, Any],
+            barrier: asyncio.Event,
+        ) -> httpx.Response:
+            await asyncio.wait_for(barrier.wait(), timeout=1.0)
+            return httpx.Response(
+                200,
+                json=payload,
+                request=httpx.Request(
+                    method,
+                    f"https://honcho.example.invalid{path}",
+                ),
+            )
+
+        async def get(self, path: str, **_kwargs: Any) -> httpx.Response:
+            self.initial_started += 1
+            if self.initial_started == 2:
+                self.all_initial_started.set()
+            payload = (
+                {"status": "ok"}
+                if path == "/health"
+                else {
+                    "total_work_units": 0,
+                    "completed_work_units": 0,
+                    "in_progress_work_units": 0,
+                    "pending_work_units": 0,
+                }
+            )
+            return await self.response(
+                "GET",
+                path,
+                payload,
+                self.all_initial_started,
+            )
+
+        async def post(self, path: str, **_kwargs: Any) -> httpx.Response:
+            self.lists_started += 1
+            if self.lists_started == 3:
+                self.all_lists_started.set()
+            return await self.response(
+                "POST",
+                path,
+                {"items": [], "total": 0, "page": 1, "size": 1, "pages": 0},
+                self.all_lists_started,
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", ConcurrentClient)
+
+    response = TestClient(make_app()).get("/overview")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "ready"
+    assert response.json()["warnings"] == []
+
+
 @pytest.mark.parametrize("route", ["/capabilities", "/overview"])
 def test_routes_normalize_invalid_transport_urls(monkeypatch: Any, route: str) -> None:
     install_connection(monkeypatch)
@@ -321,7 +416,15 @@ def test_overview_fails_closed_on_inconsistent_queue_counts(
 
 @pytest.mark.parametrize(
     ("status_code", "expected_state"),
-    [(401, "unauthorized"), (403, "unauthorized"), (404, "unsupported-contract"), (503, "unreachable")],
+    [
+        (401, "unauthorized"),
+        (403, "unauthorized"),
+        (404, "unsupported-contract"),
+        (408, "unreachable"),
+        (425, "unreachable"),
+        (429, "unreachable"),
+        (503, "unreachable"),
+    ],
 )
 def test_overview_maps_upstream_failures_to_safe_states(
     monkeypatch: Any,

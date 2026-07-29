@@ -59,6 +59,7 @@ describe("Overview renderer model", () => {
     { ...readyPayload, queue: { ...readyPayload.queue, pending: -1 } },
     { ...readyPayload, queue: { ...readyPayload.queue, total: 7 } },
     { ...readyPayload, warnings: ["raw-upstream-warning"] },
+    { ...readyPayload, warnings: ["identity-config-missing"] },
     { ...readyPayload, observed_at: "2026-07-29T10:00:00" },
     { ...readyPayload, observed_at: "not-a-date" },
     "synthetic-private-response"

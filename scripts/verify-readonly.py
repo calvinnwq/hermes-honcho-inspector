@@ -9,10 +9,10 @@ from typing import NoReturn
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
 APPROVED_SHA256 = {
-    "dashboard/plugin_api.py": "844eed21ef735bb34738e6d5e27beee50c3283dcd6bb40d5e439e21fe9de908b",
-    "desktop/plugin.ts": "73f149bec9fa82a29eddc1137190aeab887ec669663c1718b26c137e077a46b0",
-    "desktop/overview-model.ts": "0cec01058b746185be4c243cfd037698bd0363631bf6c5e2f5a27f8129b9e9b6",
-    "dist/desktop-plugins/honcho-inspector/plugin.js": "1103c98146dbe3553116add31fe81c82189293a744afcd78f7230c79b8db598f",
+    "dashboard/plugin_api.py": "394fcfd3816c9a45b25feab5b532854b221dcdcf1ec53d227e3a439ffc4e4918",
+    "desktop/plugin.ts": "502b9b8b0bdeaf9cde19b239ee5c546c81bbccafa61e87501462ef3096319a51",
+    "desktop/overview-model.ts": "598020e0a90d69e4b91cbe6be7d7880277751fce3afa875114d4b987a72a67f3",
+    "dist/desktop-plugins/honcho-inspector/plugin.js": "ee847a03243c96f7448b0290fba950589b423873aead38f773f6b4af589e6dbc",
 }
 
 
@@ -215,7 +215,7 @@ def verify_desktop_plugin() -> None:
     if any(token in combined for token in forbidden):
         fail("Desktop runtime contains an unapproved capability")
     required = (
-        'ctx.rest<unknown>("/overview")',
+        'ctx.rest<unknown>("/overview", { timeoutMs: OVERVIEW_TIMEOUT_MS })',
         "useValue(host.state.profile)",
         'queryKey: [PLUGIN_ID, "overview", profile]',
         "ctx.registerMany(",

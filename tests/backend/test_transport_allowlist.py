@@ -208,6 +208,40 @@ def test_local_environment_without_base_url_fails_closed_before_network(
     assert response.json()["state"] == "missing-configuration"
 
 
+@pytest.mark.parametrize("workspace_id", [".", "..", " . ", " .. "])
+def test_dot_segment_workspace_fails_closed_before_network(
+    monkeypatch: Any,
+    workspace_id: str,
+) -> None:
+    install_config_module(
+        monkeypatch,
+        SimpleNamespace(
+            enabled=True,
+            explicitly_configured=True,
+            workspace_id=workspace_id,
+            api_key=None,
+            base_url="https://honcho.example.invalid",
+            environment="local",
+            timeout=None,
+            raw={},
+            host="hermes",
+        ),
+    )
+
+    class FailIfConstructed:
+        def __init__(self, **_options: Any) -> None:
+            raise AssertionError("network client must not be constructed")
+
+    monkeypatch.setattr(httpx, "AsyncClient", FailIfConstructed)
+    app = FastAPI()
+    app.include_router(plugin_api.router)
+
+    response = TestClient(app, raise_server_exceptions=False).get("/overview")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "missing-configuration"
+
+
 @pytest.mark.parametrize(
     "base_url",
     [

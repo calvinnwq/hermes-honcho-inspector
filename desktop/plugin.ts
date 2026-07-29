@@ -25,11 +25,11 @@ import {
 export const PLUGIN_ID = "honcho-inspector"
 export const PLUGIN_VERSION = "0.1.0"
 const OVERVIEW_PATH = "/honcho-inspector"
+const OVERVIEW_TIMEOUT_MS = 65_000
 
 const WARNING_COPY: Record<OverviewWarning, string> = {
   "processing-pending": "Pending work is expected while Honcho updates memory.",
   "processing-in-progress": "Honcho is actively processing workspace memory.",
-  "identity-config-missing": "Peer identity configuration is incomplete in the active Hermes profile.",
   "unsupported-contract": "The service response does not match the supported Overview contract."
 }
 
@@ -165,7 +165,9 @@ function OverviewPage({ ctx }: { ctx: PluginContext }) {
   const profile = useValue(host.state.profile)
   const query = useQuery<OverviewData>({
     queryKey: [PLUGIN_ID, "overview", profile],
-    queryFn: () => loadOverview(() => ctx.rest<unknown>("/overview")),
+    queryFn: () => loadOverview(() =>
+      ctx.rest<unknown>("/overview", { timeoutMs: OVERVIEW_TIMEOUT_MS })
+    ),
     retry: false
   })
   const refresh = () => void query.refetch()

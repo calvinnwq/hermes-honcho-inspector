@@ -160,7 +160,7 @@ def test_readonly_verifier_rejects_runtime_capabilities(
         ),
         (
             "desktop/plugin.ts",
-            'ctx.rest<unknown>("/overview")',
+            'ctx.rest<unknown>("/overview", { timeoutMs: OVERVIEW_TIMEOUT_MS })',
             'ctx.rest<unknown>("/proxy")',
         ),
         (

@@ -9,7 +9,6 @@ export type OverviewState =
 export type OverviewWarning =
   | "processing-pending"
   | "processing-in-progress"
-  | "identity-config-missing"
   | "unsupported-contract"
 
 export interface OverviewQueue {
@@ -73,7 +72,6 @@ const STATES = new Set<OverviewState>(Object.keys(STATE_GUIDANCE) as OverviewSta
 const WARNINGS = new Set<OverviewWarning>([
   "processing-pending",
   "processing-in-progress",
-  "identity-config-missing",
   "unsupported-contract"
 ])
 
