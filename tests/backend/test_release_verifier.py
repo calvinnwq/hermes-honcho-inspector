@@ -19,6 +19,7 @@ BUILD_INPUTS = (
     "dashboard/plugin_api.py",
     "desktop/plugin.ts",
     "desktop/overview-model.ts",
+    "desktop/session-model.ts",
     "INSTALL.md",
     "LICENSE",
     "compatibility.json",

@@ -12,6 +12,7 @@ RUNTIME_FILES = (
     "dashboard/plugin_api.py",
     "desktop/plugin.ts",
     "desktop/overview-model.ts",
+    "desktop/session-model.ts",
     "dist/desktop-plugins/honcho-inspector/plugin.js",
 )
 
@@ -35,7 +36,7 @@ def run_verifier(candidate: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_readonly_verifier_accepts_the_slice_two_overview(tmp_path: Path) -> None:
+def test_readonly_verifier_accepts_slice_3a_session_summaries(tmp_path: Path) -> None:
     candidate = copy_runtime(tmp_path)
 
     result = run_verifier(candidate)
@@ -84,6 +85,7 @@ def test_readonly_verifier_rejects_executable_parameter_annotations(tmp_path: Pa
             '\nimport subprocess\nsubprocess.run(["false"], check=False)\n',
         ),
         ("desktop/plugin.ts", '\nglobalThis["fetch"]("https://example.invalid")\n'),
+        ("desktop/plugin.ts", '\nfetch("https://example.invalid")\n'),
         ("desktop/plugin.ts", "\nnew XMLHttpRequest()\n"),
         (
             "desktop/plugin.ts",
@@ -115,6 +117,27 @@ def test_readonly_verifier_rejects_runtime_capabilities(
     assert "read-only verification failed" in result.stderr + result.stdout
 
 
+def test_readonly_verifier_rejects_aliased_http_client_mutation(tmp_path: Path) -> None:
+    candidate = copy_runtime(tmp_path)
+    target = candidate / "dashboard/plugin_api.py"
+    source = target.read_text(encoding="utf-8")
+    approved = 'response = await client.get("/health")'
+    assert approved in source
+    target.write_text(
+        source.replace(
+            approved,
+            'alias = client\n            response = await alias.post("/health")',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_verifier(candidate)
+
+    assert result.returncode != 0
+    assert "read-only verification failed" in result.stderr + result.stdout
+
+
 @pytest.mark.parametrize(
     ("relative", "approved", "mutation"),
     [
@@ -127,6 +150,26 @@ def test_readonly_verifier_rejects_runtime_capabilities(
             "dashboard/plugin_api.py",
             '@router.get("/overview"',
             '@router.get("/proxy"',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            '@router.get("/sessions"',
+            '@router.post("/sessions"',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            '@router.get("/sessions-with-summaries"',
+            '@router.post("/sessions-with-summaries"',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            'params={"reverse": True, "page": page, "size": SESSION_LIST_SIZE}',
+            'params={"reverse": True, "page": page, "size": 100}',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            'f"/v3/workspaces/{workspace_path}/sessions/{session_path}/summaries"',
+            'f"/v3/workspaces/{workspace_path}/messages"',
         ),
         (
             "dashboard/plugin_api.py",
@@ -165,8 +208,33 @@ def test_readonly_verifier_rejects_runtime_capabilities(
         ),
         (
             "desktop/plugin.ts",
+            "sessionListPath(page, summarizedOnly)",
+            'ctx.rest<unknown>("/proxy")',
+        ),
+        (
+            "desktop/plugin.ts",
+            "`/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`",
+            '"/proxy"',
+        ),
+        (
+            "desktop/plugin.ts",
             'queryKey: [PLUGIN_ID, "overview", profile]',
             'queryKey: [PLUGIN_ID, "overview"]',
+        ),
+        (
+            "desktop/plugin.ts",
+            "function SessionPagination",
+            "function SessionPager",
+        ),
+        (
+            "desktop/plugin.ts",
+            'role: "dialog"',
+            'role: "section"',
+        ),
+        (
+            "desktop/plugin.ts",
+            "bg-(--ui-chat-bubble-background)",
+            'bg-(--ui-bg-primary)',
         ),
     ],
 )

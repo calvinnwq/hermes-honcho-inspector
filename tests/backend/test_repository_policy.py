@@ -5,13 +5,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_slice_two_install_document_does_not_mutate_a_live_profile() -> None:
+def test_slice_3a_install_document_does_not_mutate_a_live_profile() -> None:
     instructions = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
 
     assert "No release has been published" in instructions
-    assert "Do not install Slice 2" in instructions
+    assert "Do not install Slice 3A" in instructions
     assert "GET /capabilities" in instructions
     assert "GET /overview" in instructions
+    assert "GET /sessions" in instructions
+    assert "GET /sessions-with-summaries" in instructions
+    assert "GET /session-summary" in instructions
     assert "GET /health" in instructions
     assert "Desktop Overview" in instructions
     assert "HERMES_HOME" not in instructions
@@ -20,17 +23,21 @@ def test_slice_two_install_document_does_not_mutate_a_live_profile() -> None:
     assert "Desktop Settings" not in instructions
 
 
-def test_readme_describes_the_slice_two_overview() -> None:
+def test_readme_describes_the_slice_3a_session_summaries_view() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "Slice 2" in readme
+    assert "Slice 3A" in readme
     assert "GET /capabilities" in readme
     assert "GET /overview" in readme
     assert "GET /health" in readme
     assert "Desktop Overview" in readme
     assert "aggregate totals" in readme
     assert "queue activity" in readme
-    assert "does not inspect memory records" in readme
+    assert "bounded recent-session pagination" in readme
+    assert "Summarised only view" in readme
+    assert "empty filtered page" in readme
+    assert "dedicated modal" in readme
+    assert "does not render raw messages" in readme
     assert "supported_contract" in readme
     assert "contract_verified" in readme
     assert "does not verify the Honcho API version" in readme

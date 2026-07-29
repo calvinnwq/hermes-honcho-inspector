@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Verify the fixed, read-only Slice 2 Overview runtime contract."""
+"""Verify the fixed, read-only Slice 3A Session Summaries runtime contract."""
 
 import ast
 import hashlib
+import re
 import sys
 from pathlib import Path
 from typing import NoReturn
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
 APPROVED_SHA256 = {
-    "dashboard/plugin_api.py": "4f4dd5ce9aa8afa00e8abbe13a9503933e1d501124dd707c9bf836d675821100",
-    "desktop/plugin.ts": "45a770d64d13dd5c59bd1208d8bb0c36481e295fc028ac661833227e4448ecc7",
+    "dashboard/plugin_api.py": "9f9ffcf9e4d669d4c97ed670580835f8b323d2decd08905ede0a4ce9524f6b8b",
+    "desktop/plugin.ts": "21c702ea84d8e2b60c6a8cb9f2a8b23f9e95baa218f8ff36f4c066d55e219a4d",
     "desktop/overview-model.ts": "598020e0a90d69e4b91cbe6be7d7880277751fce3afa875114d4b987a72a67f3",
-    "dist/desktop-plugins/honcho-inspector/plugin.js": "8a71a72ba06d868299700c039b08b029c026beeb35e3ab581479dcb47b329372",
+    "desktop/session-model.ts": "5079576543fae14155847182b0c7024a42d7346dc3e635743d310fe4fcf0c5a2",
 }
 
 
@@ -37,7 +38,7 @@ def read_text(relative: str) -> str:
 def verify_approved_hash(relative: str) -> None:
     digest = hashlib.sha256(read_bytes(relative)).hexdigest()
     if digest != APPROVED_SHA256[relative]:
-        fail(f"{relative} differs from the approved Slice 2 runtime")
+        fail(f"{relative} differs from the approved Slice 3A runtime")
 
 
 def is_docstring(statement: ast.stmt) -> bool:
@@ -101,13 +102,82 @@ def fixed_list_post(call: ast.Call, source: str) -> bool:
     )
 
 
+def fixed_recent_sessions_post(call: ast.Call, source: str) -> bool:
+    if len(call.args) != 1 or ast.get_source_segment(source, call.args[0]) != 'f"/v3/workspaces/{workspace_path}/sessions/list"':
+        return False
+    keywords = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg}
+    if set(keywords) != {"params", "json"}:
+        return False
+
+    params = keywords["params"]
+    body = keywords["json"]
+    if not isinstance(params, ast.Dict) or not isinstance(body, ast.Dict) or body.keys or body.values:
+        return False
+    keys = [key.value for key in params.keys if isinstance(key, ast.Constant)]
+    values = params.values
+    return (
+        keys == ["reverse", "page", "size"]
+        and isinstance(values[0], ast.Constant)
+        and values[0].value is True
+        and isinstance(values[1], ast.Name)
+        and values[1].id == "page"
+        and isinstance(values[2], ast.Name)
+        and values[2].id == "SESSION_LIST_SIZE"
+    )
+
+
+def http_client_bindings(tree: ast.AST) -> set[str]:
+    bindings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncWith):
+            for item in node.items:
+                expression = item.context_expr
+                if (
+                    isinstance(expression, ast.Call)
+                    and isinstance(expression.func, ast.Attribute)
+                    and isinstance(expression.func.value, ast.Name)
+                    and expression.func.value.id == "httpx"
+                    and expression.func.attr == "AsyncClient"
+                    and isinstance(item.optional_vars, ast.Name)
+                ):
+                    bindings.add(item.optional_vars.id)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for argument in node.args.args:
+                annotation = argument.annotation
+                if (
+                    isinstance(annotation, ast.Attribute)
+                    and isinstance(annotation.value, ast.Name)
+                    and annotation.value.id == "httpx"
+                    and annotation.attr == "AsyncClient"
+                ):
+                    bindings.add(argument.arg)
+
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in bindings
+                and node.targets[0].id not in bindings
+            ):
+                bindings.add(node.targets[0].id)
+                changed = True
+    return bindings
+
+
 def verify_dashboard_plugin() -> None:
     verify_approved_hash("dashboard/plugin_api.py")
     source = read_text("dashboard/plugin_api.py")
     tree = ast.parse(source)
+    client_bindings = http_client_bindings(tree)
     routes: list[tuple[str, str]] = []
     client_gets: list[str] = []
     list_posts = 0
+    recent_session_posts = 0
     list_resource_loops = 0
     config_imports = 0
     forbidden_modules = {"honcho", "os", "pathlib", "requests", "socket", "subprocess"}
@@ -128,7 +198,10 @@ def verify_dashboard_plugin() -> None:
                 if isinstance(node, ast.Import)
                 else [node.module or ""]
             )
-            if any(module.split(".", 1)[0] in forbidden_modules for module in modules):
+            if any(
+                module == "urllib.request" or module.split(".", 1)[0] in forbidden_modules
+                for module in modules
+            ):
                 fail("dashboard backend imports a forbidden runtime module")
             if isinstance(node, ast.ImportFrom) and node.module == "plugins.memory.honcho.client":
                 imported = [(alias.name, alias.asname) for alias in node.names]
@@ -163,51 +236,82 @@ def verify_dashboard_plugin() -> None:
             list_resource_loops += 1
 
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "httpx"
+                and node.func.attr != "AsyncClient"
+            ):
+                fail("dashboard backend contains an unapproved direct HTTP operation")
+            if (
+                isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "router"
+                and node.func.attr == "add_api_route"
+            ):
+                fail("dashboard backend may register only declarative fixed routes")
             if node.func.attr in forbidden_client_methods:
                 fail("dashboard backend contains a forbidden HTTP client method")
-            if isinstance(node.func.value, ast.Name) and node.func.value.id == "client":
+            if isinstance(node.func.value, ast.Name) and node.func.value.id in client_bindings:
                 if node.func.attr == "get":
                     if len(node.args) != 1 or node.keywords:
                         fail("Honcho GET operations must have fixed argument shapes")
                     client_gets.append(ast.get_source_segment(source, node.args[0]) or "")
                 elif node.func.attr == "post":
-                    if not fixed_list_post(node, source):
-                        fail("Honcho list operation must remain a fixed size-one POST")
-                    list_posts += 1
+                    if fixed_list_post(node, source):
+                        list_posts += 1
+                    elif fixed_recent_sessions_post(node, source):
+                        recent_session_posts += 1
+                    else:
+                        fail("Honcho POST operations differ from the fixed read-only contracts")
                 else:
                     fail("dashboard backend contains an unapproved HTTP operation")
 
-    if routes != [("get", "/capabilities"), ("get", "/overview")]:
-        fail("dashboard backend must expose only GET /capabilities and GET /overview")
+    if routes != [
+        ("get", "/capabilities"),
+        ("get", "/overview"),
+        ("get", "/sessions"),
+        ("get", "/sessions-with-summaries"),
+        ("get", "/session-summary"),
+    ]:
+        fail("dashboard backend must expose only fixed read-only Inspector routes")
     if config_imports != 1:
         fail("dashboard backend must resolve only HonchoClientConfig")
     if client_gets.count('"/health"') != 2 or client_gets.count(
         'f"{workspace_prefix}/queue/status"'
-    ) != 1 or len(client_gets) != 3:
-        fail("Honcho GET operations differ from the approved health and queue probes")
-    if list_posts != 1 or list_resource_loops != 1:
-        fail("Honcho totals must use one fixed peers/sessions/conclusions list loop")
-    if 'quote(connection.workspace_label, safe="")' not in source:
-        fail("workspace path must remain server-resolved and safely encoded")
+    ) != 1 or client_gets.count(
+        'f"/v3/workspaces/{workspace_path}/sessions/{session_path}/summaries"'
+    ) != 1 or len(client_gets) != 4:
+        fail("Honcho GET operations differ from the approved read-only probes")
+    if list_posts != 1 or recent_session_posts != 1 or list_resource_loops != 1:
+        fail("Honcho list operations differ from the approved bounded contracts")
+    if (
+        'quote(connection.workspace_label, safe="")' not in source
+        or 'quote(session_id, safe="")' not in source
+        or "MAX_SESSION_PAGE = 1_000" not in source
+        or "Query(ge=1, le=MAX_SESSION_PAGE)" not in source
+    ):
+        fail("workspace and session paths must remain server-resolved and safely encoded")
     if (
         "OVERVIEW_BUDGET_SECONDS = 55.0" not in source
         or "async with asyncio.timeout(OVERVIEW_BUDGET_SECONDS)" not in source
+        or source.count("follow_redirects=False") != 5
+        or "follow_redirects=True" in source
     ):
-        fail("Overview backend must enforce the approved overall deadline")
+        fail("read-only backend requests must retain fixed deadlines and redirect policy")
 
 
 def verify_desktop_plugin() -> None:
     for relative in (
         "desktop/plugin.ts",
         "desktop/overview-model.ts",
-        "dist/desktop-plugins/honcho-inspector/plugin.js",
+        "desktop/session-model.ts",
     ):
         verify_approved_hash(relative)
 
     source = read_text("desktop/plugin.ts")
     model = read_text("desktop/overview-model.ts")
+    session_model = read_text("desktop/session-model.ts")
     bundle = read_text("dist/desktop-plugins/honcho-inspector/plugin.js")
-    combined = "\n".join((source, model, bundle))
+    combined = "\n".join((source, model, session_model, bundle))
     forbidden = (
         "host.request",
         "globalThis[\"fetch\"]",
@@ -216,15 +320,41 @@ def verify_desktop_plugin() -> None:
         "localStorage.",
         "document.",
         "ctx.socket(",
+        "const credential",
+        "api_key",
+        "apiKey",
+        "Bearer ",
     )
     if any(token in combined for token in forbidden):
+        fail("Desktop runtime contains an unapproved capability")
+    if re.search(r"(?<![\w$])fetch\s*(?:<[^>]*>)?\s*\(", combined):
         fail("Desktop runtime contains an unapproved capability")
     required = (
         "const OVERVIEW_BUDGET_MS = 55_000",
         "const OVERVIEW_TIMEOUT_MS = OVERVIEW_BUDGET_MS + 10_000",
+        "const SESSION_VIEW_TIMEOUT_MS = 30_000",
         'ctx.rest<unknown>("/overview", { timeoutMs: OVERVIEW_TIMEOUT_MS })',
-        "useValue(host.state.profile)",
+        "sessionListPath(page, summarizedOnly)",
+        "`/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`",
         'queryKey: [PLUGIN_ID, "overview", profile]',
+        'queryKey: [PLUGIN_ID, "sessions", profile, page, summarizedOnly ? "summarized" : "all"]',
+        'queryKey: [PLUGIN_ID, "session-summary", profile, selectedSessionKey]',
+        "function SessionPagination",
+        "function SessionSummaryModal",
+        "dialog.showModal()",
+        "onCancel:",
+        "autoFocus: true",
+        "returnFocusRef.current?.focus()",
+        'role: "dialog"',
+        '"aria-modal": true',
+        "bg-(--ui-chat-bubble-background)",
+        "border-(--stroke-nous)",
+        "shadow-nous",
+        "Derived summary",
+        "Evidence: ${EVIDENCE_COPY[status]}",
+        "exact claim-to-message attribution",
+        "jsx(SessionSummaries, { ctx, profile }, profile)",
+        "useValue(host.state.profile)",
         "ctx.registerMany(",
         "area: ROUTES_AREA",
         "area: SIDEBAR_NAV_AREA",
@@ -240,7 +370,7 @@ def main() -> None:
     verify_general_plugin()
     verify_dashboard_plugin()
     verify_desktop_plugin()
-    print("read-only verification passed: exact Slice 2 Overview contract")
+    print("read-only verification passed: fixed Slice 3A Session Summaries contract")
 
 
 if __name__ == "__main__":

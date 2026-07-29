@@ -58,6 +58,12 @@ declare module "@hermes/plugin-sdk" {
   export const StatusDot: unknown
 }
 
+declare module "react" {
+  export function useState<T>(initialValue: T): [T, (value: T) => void]
+  export function useEffect(effect: () => void, dependencies?: unknown[]): void
+  export function useRef<T>(initialValue: T): { current: T }
+}
+
 declare module "react/jsx-runtime" {
   export function jsx(type: unknown, props: Record<string, unknown>, key?: string): unknown
   export function jsxs(type: unknown, props: Record<string, unknown>, key?: string): unknown

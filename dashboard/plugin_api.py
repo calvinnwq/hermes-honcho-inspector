@@ -10,7 +10,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import quote, urlparse
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 PLUGIN_VERSION = "0.1.0"
@@ -20,6 +20,12 @@ DEFAULT_TIMEOUT_SECONDS = 10.0
 MIN_TIMEOUT_SECONDS = 1.0
 MAX_TIMEOUT_SECONDS = 30.0
 OVERVIEW_BUDGET_SECONDS = 55.0
+SESSION_LIST_SIZE = 20
+MAX_SESSION_PAGE = 1_000
+SESSION_VIEW_BUDGET_SECONDS = 20.0
+MAX_SESSION_ID_CHARS = 200
+MAX_UPSTREAM_SUMMARY_CHARS = 100_000
+MAX_PUBLIC_SUMMARY_CHARS = 8_000
 MAX_SAFE_COUNT = 9_007_199_254_740_991
 
 CapabilityState = Literal[
@@ -37,6 +43,7 @@ OverviewWarning = Literal[
     "unsupported-contract",
 ]
 SafeCount = Annotated[int, Field(strict=True, ge=0, le=MAX_SAFE_COUNT)]
+EvidenceStatus = Literal["verified", "context", "unavailable"]
 
 
 class CapabilityFeatures(BaseModel):
@@ -95,6 +102,56 @@ class OverviewResponse(BaseModel):
     warnings: tuple[OverviewWarning, ...] = ()
 
 
+class SessionItem(BaseModel):
+    """Safe session selector data for the Session Summaries view."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    session_key: Annotated[str, Field(strict=True, min_length=1, max_length=MAX_SESSION_ID_CHARS)]
+    is_active: bool
+    created_at: datetime
+
+
+class SessionListResponse(BaseModel):
+    """Bounded, secret-free recent session list."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    state: CapabilityState
+    mode: Literal["all", "summarized"]
+    items: tuple[SessionItem, ...] = ()
+    total: SafeCount | None = None
+    page: SafeCount | None = None
+    pages: SafeCount | None = None
+    observed_at: datetime
+    warnings: tuple[str, ...] = ()
+
+
+class SessionSummaryItem(BaseModel):
+    """A bounded Honcho summary with explicit evidence semantics."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    content: str
+    summary_type: Literal["short", "long"]
+    created_at: datetime
+    token_count: SafeCount
+    evidence_status: Literal["context"] = "context"
+    truncated: bool = False
+
+
+class SessionSummaryResponse(BaseModel):
+    """A single session summary without raw messages or source identifiers."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    state: CapabilityState
+    summary: SessionSummaryItem | None = None
+    evidence_status: EvidenceStatus = "unavailable"
+    observed_at: datetime
+    warnings: tuple[str, ...] = ()
+
+
 class _UpstreamPage(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
@@ -135,6 +192,70 @@ class _UpstreamQueue(BaseModel):
         if accounted != self.total_work_units:
             raise ValueError("queue counts do not match the total")
         return self
+
+
+class _UpstreamSession(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    id: Annotated[str, Field(strict=True, min_length=1, max_length=MAX_SESSION_ID_CHARS)]
+    is_active: bool = Field(strict=True)
+    created_at: datetime
+
+
+class _UpstreamSessionPage(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    items: list[_UpstreamSession]
+    total: SafeCount
+    page: Annotated[int, Field(strict=True, ge=1)]
+    size: Annotated[int, Field(strict=True, ge=1, le=100)]
+    pages: SafeCount
+
+    @model_validator(mode="after")
+    def matches_fixed_recent_request(self) -> _UpstreamSessionPage:
+        expected_pages = (
+            0 if self.total == 0 else (self.total + SESSION_LIST_SIZE - 1) // SESSION_LIST_SIZE
+        )
+        page_offset = (self.page - 1) * SESSION_LIST_SIZE
+        expected_items = max(0, min(SESSION_LIST_SIZE, self.total - page_offset))
+        if (
+            self.size != SESSION_LIST_SIZE
+            or self.pages != expected_pages
+            or self.page > max(self.pages, 1)
+            or len(self.items) != expected_items
+        ):
+            raise ValueError("session pagination envelope does not match the fixed request")
+        return self
+
+
+class _UpstreamSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    content: Annotated[str, Field(strict=True, min_length=1, max_length=MAX_UPSTREAM_SUMMARY_CHARS)]
+    message_id: Annotated[str, Field(strict=True, min_length=1, max_length=MAX_SESSION_ID_CHARS)]
+    summary_type: Literal["short", "long"]
+    created_at: datetime
+    token_count: SafeCount
+
+
+class _UpstreamSummaryEnvelope(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    id: Annotated[str, Field(strict=True, min_length=1, max_length=MAX_SESSION_ID_CHARS)]
+    short_summary: _UpstreamSummary | None = None
+    long_summary: _UpstreamSummary | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SessionPageFetch:
+    page: _UpstreamSessionPage | None = None
+    state: CapabilityState | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SummaryFetch:
+    envelope: _UpstreamSummaryEnvelope | None = None
+    state: CapabilityState | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,4 +532,234 @@ async def overview() -> OverviewResponse:
         ),
         observed_at=datetime.now(timezone.utc),
         warnings=tuple(warnings),
+    )
+
+
+def _session_list_failure(
+    state: CapabilityState,
+    *,
+    mode: Literal["all", "summarized"],
+) -> SessionListResponse:
+    warnings = ("unsupported-contract",) if state == "unsupported-contract" else ()
+    return SessionListResponse(
+        state=state,
+        mode=mode,
+        observed_at=datetime.now(timezone.utc),
+        warnings=warnings,
+    )
+
+
+async def _fetch_session_page(
+    client: httpx.AsyncClient,
+    workspace_path: str,
+    page: int,
+) -> _SessionPageFetch:
+    response = await client.post(
+        f"/v3/workspaces/{workspace_path}/sessions/list",
+        params={"reverse": True, "page": page, "size": SESSION_LIST_SIZE},
+        json={},
+    )
+    state = _status_state(response.status_code)
+    if state is not None:
+        return _SessionPageFetch(state=state)
+    upstream_page = _UpstreamSessionPage.model_validate(response.json())
+    if upstream_page.page != page:
+        raise ValueError("session response page does not match the request")
+    return _SessionPageFetch(page=upstream_page)
+
+
+async def _fetch_session_summary(
+    client: httpx.AsyncClient,
+    workspace_path: str,
+    session_id: str,
+) -> _SummaryFetch:
+    session_path = quote(session_id, safe="")
+    response = await client.get(
+        f"/v3/workspaces/{workspace_path}/sessions/{session_path}/summaries"
+    )
+    if response.status_code == 404:
+        return _SummaryFetch()
+    state = _status_state(response.status_code)
+    if state is not None:
+        return _SummaryFetch(state=state)
+    envelope = _UpstreamSummaryEnvelope.model_validate(response.json())
+    if envelope.id != session_id:
+        raise ValueError("summary response does not match the requested session")
+    return _SummaryFetch(envelope=envelope)
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+async def sessions(
+    page: Annotated[int, Query(ge=1, le=MAX_SESSION_PAGE)] = 1,
+) -> SessionListResponse:
+    """Return one fixed, bounded page of recent sessions."""
+
+    connection = resolve_connection()
+    if isinstance(connection, CapabilityResponse):
+        return _session_list_failure(connection.state, mode="all")
+
+    workspace_path = quote(connection.workspace_label, safe="")
+    try:
+        async with asyncio.timeout(SESSION_VIEW_BUDGET_SECONDS):
+            async with httpx.AsyncClient(
+                base_url=connection.base_url,
+                headers=connection.headers,
+                timeout=connection.timeout,
+                follow_redirects=False,
+            ) as client:
+                page_fetch = await _fetch_session_page(client, workspace_path, page)
+                if page_fetch.state is not None:
+                    return _session_list_failure(page_fetch.state, mode="all")
+                upstream_page = page_fetch.page
+                if upstream_page is None:
+                    raise ValueError("session response did not include a page")
+    except (httpx.RequestError, httpx.InvalidURL, TimeoutError):
+        return _session_list_failure("unreachable", mode="all")
+    except (ValidationError, TypeError, ValueError):
+        return _session_list_failure("unsupported-contract", mode="all")
+
+    return SessionListResponse(
+        state="ready",
+        mode="all",
+        items=tuple(
+            SessionItem(
+                session_key=item.id,
+                is_active=item.is_active,
+                created_at=item.created_at,
+            )
+            for item in upstream_page.items
+        ),
+        total=upstream_page.total,
+        page=upstream_page.page,
+        pages=upstream_page.pages,
+        observed_at=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/sessions-with-summaries", response_model=SessionListResponse)
+async def sessions_with_summaries(
+    page: Annotated[int, Query(ge=1, le=MAX_SESSION_PAGE)] = 1,
+) -> SessionListResponse:
+    """Return only summarized sessions from one bounded recent-session page."""
+
+    connection = resolve_connection()
+    if isinstance(connection, CapabilityResponse):
+        return _session_list_failure(connection.state, mode="summarized")
+
+    workspace_path = quote(connection.workspace_label, safe="")
+    try:
+        async with asyncio.timeout(SESSION_VIEW_BUDGET_SECONDS):
+            async with httpx.AsyncClient(
+                base_url=connection.base_url,
+                headers=connection.headers,
+                timeout=connection.timeout,
+                follow_redirects=False,
+            ) as client:
+                page_fetch = await _fetch_session_page(client, workspace_path, page)
+                if page_fetch.state is not None:
+                    return _session_list_failure(page_fetch.state, mode="summarized")
+                upstream_page = page_fetch.page
+                if upstream_page is None:
+                    raise ValueError("session response did not include a page")
+
+                summary_fetches = await asyncio.gather(
+                    *(
+                        _fetch_session_summary(client, workspace_path, item.id)
+                        for item in upstream_page.items
+                    )
+                )
+                for fetch in summary_fetches:
+                    if fetch.state is not None:
+                        return _session_list_failure(fetch.state, mode="summarized")
+    except (httpx.RequestError, httpx.InvalidURL, TimeoutError):
+        return _session_list_failure("unreachable", mode="summarized")
+    except (ValidationError, TypeError, ValueError):
+        return _session_list_failure("unsupported-contract", mode="summarized")
+
+    return SessionListResponse(
+        state="ready",
+        mode="summarized",
+        items=tuple(
+            SessionItem(
+                session_key=item.id,
+                is_active=item.is_active,
+                created_at=item.created_at,
+            )
+            for item, summary_fetch in zip(upstream_page.items, summary_fetches)
+            if summary_fetch.envelope is not None
+            and (
+                summary_fetch.envelope.short_summary is not None
+                or summary_fetch.envelope.long_summary is not None
+            )
+        ),
+        total=upstream_page.total,
+        page=upstream_page.page,
+        pages=upstream_page.pages,
+        observed_at=datetime.now(timezone.utc),
+    )
+
+
+def _session_summary_response(
+    state: CapabilityState,
+    summary: SessionSummaryItem | None = None,
+) -> SessionSummaryResponse:
+    evidence_status: EvidenceStatus = "context" if summary is not None else "unavailable"
+    warnings = ("unsupported-contract",) if state == "unsupported-contract" else ()
+    return SessionSummaryResponse(
+        state=state,
+        summary=summary,
+        evidence_status=evidence_status,
+        observed_at=datetime.now(timezone.utc),
+        warnings=warnings,
+    )
+
+
+def _public_summary(summary: _UpstreamSummary) -> SessionSummaryItem:
+    content = summary.content[:MAX_PUBLIC_SUMMARY_CHARS]
+    return SessionSummaryItem(
+        content=content,
+        summary_type=summary.summary_type,
+        created_at=summary.created_at,
+        token_count=summary.token_count,
+        truncated=len(summary.content) > MAX_PUBLIC_SUMMARY_CHARS,
+    )
+
+
+@router.get("/session-summary", response_model=SessionSummaryResponse)
+async def session_summary(
+    session_id: str = Query(min_length=1, max_length=MAX_SESSION_ID_CHARS),
+) -> SessionSummaryResponse:
+    """Return one bounded derived summary for a validated session selector."""
+
+    if any(ord(character) < 32 or ord(character) == 127 for character in session_id):
+        return _session_summary_response("unsupported-contract")
+
+    connection = resolve_connection()
+    if isinstance(connection, CapabilityResponse):
+        return _session_summary_response(connection.state)
+
+    workspace_path = quote(connection.workspace_label, safe="")
+    try:
+        async with asyncio.timeout(SESSION_VIEW_BUDGET_SECONDS):
+            async with httpx.AsyncClient(
+                base_url=connection.base_url,
+                headers=connection.headers,
+                timeout=connection.timeout,
+                follow_redirects=False,
+            ) as client:
+                summary_fetch = await _fetch_session_summary(client, workspace_path, session_id)
+                if summary_fetch.state is not None:
+                    return _session_summary_response(summary_fetch.state)
+                envelope = summary_fetch.envelope
+                if envelope is None:
+                    return _session_summary_response("ready")
+                summary = envelope.short_summary or envelope.long_summary
+    except (httpx.RequestError, httpx.InvalidURL, TimeoutError):
+        return _session_summary_response("unreachable")
+    except (ValidationError, TypeError, ValueError):
+        return _session_summary_response("unsupported-contract")
+
+    return _session_summary_response(
+        "ready",
+        _public_summary(summary) if summary is not None else None,
     )
