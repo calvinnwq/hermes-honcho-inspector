@@ -73,13 +73,17 @@ def test_release_verifier_accepts_the_clean_build() -> None:
     assert result.returncode == 0, result.stderr or result.stdout
 
 
-def test_release_builder_rejects_symlinked_source_inputs(tmp_path: Path) -> None:
+@pytest.mark.parametrize("relative", ["plugin.yaml", "desktop/overview-model.ts"])
+def test_release_builder_rejects_symlinked_source_inputs(
+    tmp_path: Path,
+    relative: str,
+) -> None:
     source_root = copy_build_inputs(tmp_path)
-    plugin_manifest = source_root / "plugin.yaml"
-    external = tmp_path / "external-plugin.yaml"
-    external.write_text(plugin_manifest.read_text(encoding="utf-8"), encoding="utf-8")
-    plugin_manifest.unlink()
-    plugin_manifest.symlink_to(external)
+    source_input = source_root / relative
+    external = tmp_path / f"external-{source_input.name}"
+    external.write_text(source_input.read_text(encoding="utf-8"), encoding="utf-8")
+    source_input.unlink()
+    source_input.symlink_to(external)
 
     result = subprocess.run(
         ["node", str(BUILD), str(tmp_path / "dist"), str(source_root)],
