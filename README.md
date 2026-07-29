@@ -2,20 +2,26 @@
 
 Honcho Inspector is a read-only Hermes plugin project for inspecting Honcho health, remembered content, attribution, session context, and evidence gaps.
 
-The repository currently implements **Slice 2**: a safe Desktop Overview backed by fixed, aggregate-only Honcho operations.
+The repository currently implements **Slice 3A**: a safe Desktop Overview with bounded recent-session pagination and generated-summary inspection.
 `GET /capabilities` resolves the active Hermes profile's Honcho configuration server-side, performs only a fixed direct-HTTP `GET /health` probe, and returns a normalized secret-free capability state.
 `GET /overview` checks the same connection and returns the active workspace label, aggregate totals for peers, sessions, and conclusions, normalized queue activity, safe warnings, and an observation timestamp.
 Its fixed upstream adapter uses `GET /health`, `GET /v3/workspaces/{workspace}/queue/status`, and `POST /v3/workspaces/{workspace}/{resource}/list`, where the resource is fixed to peers, sessions, or conclusions and each request uses an empty JSON object with page 1 and size 1.
 The Desktop Overview calls only the plugin-scoped `ctx.rest("/overview")` route and lets the user refresh the current state.
+The Session Summaries view calls only the fixed plugin-scoped `/sessions?page={page}`, `/sessions-with-summaries?page={page}`, and `/session-summary?session_id={session_id}` routes.
+The session list is bounded to 20 items per page and provides explicit previous and next controls when more sessions exist.
+The default Summarised only view checks the 20 sessions on the selected page through Honcho's fixed per-session summaries endpoint and excludes sessions without a generated summary.
+Pagination remains based on Honcho's session pages, so an empty filtered page is possible and is labelled as such.
+Selecting a session opens its summary in a dedicated modal rather than appending detail below the session list.
+Missing summaries are shown as unavailable evidence, while populated summaries are labelled as Honcho-derived context rather than exact source proof.
 The backend enforces a 55-second overall Overview budget, and the Desktop route allows 10 seconds of delivery headroom before its 65-second deadline.
 Pending or in-progress queue work is presented as normal processing activity rather than data corruption or failure.
-Slice 2 reports `supported_contract` as static project support metadata and `contract_verified: false`; the unversioned health response proves reachability only and does not verify the Honcho API version.
-Slice 2 does not inspect memory records, render raw queue sessions or collection items, or provide renderer-controlled transport behavior.
+Slice 3A reports `supported_contract` as static project support metadata and `contract_verified: false`; the unversioned health response proves reachability only and does not verify the Honcho API version.
+Slice 3A does not render raw messages, expose source identifiers, or provide renderer-controlled transport behavior.
 
 ## Product boundary
 
 The V0.1 promise is inspectable memory with honest evidence status.
-Honcho v3.0.11 does not expose exact conclusion-to-message or peer-card-line provenance, so the future UI will label linked messages as context rather than verified sources.
+Honcho v3.0.11 does not expose exact conclusion-to-message or peer-card-line provenance, so generated summaries are labelled as context rather than verified source evidence.
 
 The project is deliberately read-only.
 It will not expose mutation, chat, cleanup, workspace administration, credential management, semantic query, direct database access, or a generic Honcho proxy.
@@ -34,7 +40,7 @@ Hermes Desktop plugin
 The Desktop and backend components live in one repository, version, and release because they form one product and one security boundary.
 Hermes Desktop plugins are trusted unsandboxed local code, so releases must remain deterministic and source-reviewable.
 
-## Slice 2 verification
+## Slice 3A verification
 
 Requirements:
 

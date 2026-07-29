@@ -12,6 +12,7 @@ RUNTIME_FILES = (
     "dashboard/plugin_api.py",
     "desktop/plugin.ts",
     "desktop/overview-model.ts",
+    "desktop/session-model.ts",
     "dist/desktop-plugins/honcho-inspector/plugin.js",
 )
 
@@ -35,7 +36,7 @@ def run_verifier(candidate: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_readonly_verifier_accepts_the_slice_two_overview(tmp_path: Path) -> None:
+def test_readonly_verifier_accepts_slice_3a_session_summaries(tmp_path: Path) -> None:
     candidate = copy_runtime(tmp_path)
 
     result = run_verifier(candidate)
@@ -130,6 +131,26 @@ def test_readonly_verifier_rejects_runtime_capabilities(
         ),
         (
             "dashboard/plugin_api.py",
+            '@router.get("/sessions"',
+            '@router.post("/sessions"',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            '@router.get("/sessions-with-summaries"',
+            '@router.post("/sessions-with-summaries"',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            'params={"reverse": True, "page": page, "size": SESSION_LIST_SIZE}',
+            'params={"reverse": True, "page": page, "size": 100}',
+        ),
+        (
+            "dashboard/plugin_api.py",
+            'f"/v3/workspaces/{workspace_path}/sessions/{session_path}/summaries"',
+            'f"/v3/workspaces/{workspace_path}/messages"',
+        ),
+        (
+            "dashboard/plugin_api.py",
             'client.get("/health")',
             'client.post("/health")',
         ),
@@ -165,8 +186,33 @@ def test_readonly_verifier_rejects_runtime_capabilities(
         ),
         (
             "desktop/plugin.ts",
+            "sessionListPath(page, summarizedOnly)",
+            'ctx.rest<unknown>("/proxy")',
+        ),
+        (
+            "desktop/plugin.ts",
+            "`/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`",
+            '"/proxy"',
+        ),
+        (
+            "desktop/plugin.ts",
             'queryKey: [PLUGIN_ID, "overview", profile]',
             'queryKey: [PLUGIN_ID, "overview"]',
+        ),
+        (
+            "desktop/plugin.ts",
+            "function SessionPagination",
+            "function SessionPager",
+        ),
+        (
+            "desktop/plugin.ts",
+            'role: "dialog"',
+            'role: "section"',
+        ),
+        (
+            "desktop/plugin.ts",
+            "bg-(--ui-chat-bubble-background)",
+            'bg-(--ui-bg-primary)',
         ),
     ],
 )
