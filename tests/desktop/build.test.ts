@@ -20,6 +20,8 @@ describe("Desktop release bundle", () => {
     expect(bundle).toContain('var OVERVIEW_PATH = "/honcho-inspector"')
     expect(bundle).toContain('label: "Honcho Inspector"')
     expect(bundle).toContain('ctx.rest("/overview", {')
+    expect(bundle).toContain("var OVERVIEW_BUDGET_MS = 55e3")
+    expect(bundle).toContain("var OVERVIEW_TIMEOUT_MS = OVERVIEW_BUDGET_MS + 1e4")
     expect(bundle).toContain("timeoutMs: OVERVIEW_TIMEOUT_MS")
     expect(bundle).toContain("ctx.registerMany")
     expect(bundle).toContain("useValue(host.state.profile)")

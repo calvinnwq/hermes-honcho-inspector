@@ -25,7 +25,8 @@ import {
 export const PLUGIN_ID = "honcho-inspector"
 export const PLUGIN_VERSION = "0.1.0"
 const OVERVIEW_PATH = "/honcho-inspector"
-const OVERVIEW_TIMEOUT_MS = 65_000
+const OVERVIEW_BUDGET_MS = 55_000
+const OVERVIEW_TIMEOUT_MS = OVERVIEW_BUDGET_MS + 10_000
 
 const WARNING_COPY: Record<OverviewWarning, string> = {
   "processing-pending": "Pending work is expected while Honcho updates memory.",

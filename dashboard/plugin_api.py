@@ -19,6 +19,7 @@ HOSTED_BASE_URL = "https://api.honcho.dev"
 DEFAULT_TIMEOUT_SECONDS = 10.0
 MIN_TIMEOUT_SECONDS = 1.0
 MAX_TIMEOUT_SECONDS = 30.0
+OVERVIEW_BUDGET_SECONDS = 55.0
 MAX_SAFE_COUNT = 9_007_199_254_740_991
 
 CapabilityState = Literal[
@@ -350,41 +351,42 @@ async def overview() -> OverviewResponse:
     workspace_prefix = f"/v3/workspaces/{workspace_path}"
 
     try:
-        async with httpx.AsyncClient(
-            base_url=connection.base_url,
-            headers=connection.headers,
-            timeout=connection.timeout,
-            follow_redirects=False,
-        ) as client:
-            health_response, queue_response = await asyncio.gather(
-                client.get("/health"),
-                client.get(f"{workspace_prefix}/queue/status"),
-            )
-            for initial_response in (health_response, queue_response):
-                state = _status_state(initial_response.status_code)
-                if state is not None:
-                    return _overview_failure(state, connection)
-            queue = _UpstreamQueue.model_validate(queue_response.json())
-
-            list_requests = []
-            for resource in ("peers", "sessions", "conclusions"):
-                list_requests.append(
-                    client.post(
-                        f"{workspace_prefix}/{resource}/list",
-                        params={"page": 1, "size": 1},
-                        json={},
-                    )
+        async with asyncio.timeout(OVERVIEW_BUDGET_SECONDS):
+            async with httpx.AsyncClient(
+                base_url=connection.base_url,
+                headers=connection.headers,
+                timeout=connection.timeout,
+                follow_redirects=False,
+            ) as client:
+                health_response, queue_response = await asyncio.gather(
+                    client.get("/health"),
+                    client.get(f"{workspace_prefix}/queue/status"),
                 )
-            page_responses = await asyncio.gather(*list_requests)
-            for page_response in page_responses:
-                state = _status_state(page_response.status_code)
-                if state is not None:
-                    return _overview_failure(state, connection)
-            totals = [
-                _UpstreamPage.model_validate(response.json()).total
-                for response in page_responses
-            ]
-    except (httpx.RequestError, httpx.InvalidURL):
+                for initial_response in (health_response, queue_response):
+                    state = _status_state(initial_response.status_code)
+                    if state is not None:
+                        return _overview_failure(state, connection)
+                queue = _UpstreamQueue.model_validate(queue_response.json())
+
+                list_requests = []
+                for resource in ("peers", "sessions", "conclusions"):
+                    list_requests.append(
+                        client.post(
+                            f"{workspace_prefix}/{resource}/list",
+                            params={"page": 1, "size": 1},
+                            json={},
+                        )
+                    )
+                page_responses = await asyncio.gather(*list_requests)
+                for page_response in page_responses:
+                    state = _status_state(page_response.status_code)
+                    if state is not None:
+                        return _overview_failure(state, connection)
+                totals = [
+                    _UpstreamPage.model_validate(response.json()).total
+                    for response in page_responses
+                ]
+    except (httpx.RequestError, httpx.InvalidURL, TimeoutError):
         return _overview_failure("unreachable", connection)
     except (ValidationError, TypeError, ValueError):
         return _overview_failure("unsupported-contract", connection)

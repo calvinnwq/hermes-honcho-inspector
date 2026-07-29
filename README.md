@@ -7,6 +7,7 @@ The repository currently implements **Slice 2**: a safe Desktop Overview backed 
 `GET /overview` checks the same connection and returns the active workspace label, aggregate totals for peers, sessions, and conclusions, normalized queue activity, safe warnings, and an observation timestamp.
 Its fixed upstream adapter uses `GET /health`, `GET /v3/workspaces/{workspace}/queue/status`, and size-one read-only list requests for peer, session, and conclusion totals.
 The Desktop Overview calls only the plugin-scoped `ctx.rest("/overview")` route and lets the user refresh the current state.
+The backend enforces a 55-second overall Overview budget, and the Desktop route allows 10 seconds of delivery headroom before its 65-second deadline.
 Pending or in-progress queue work is presented as normal processing activity rather than data corruption or failure.
 Slice 2 reports `supported_contract` as static project support metadata and `contract_verified: false`; the unversioned health response proves reachability only and does not verify the Honcho API version.
 Slice 2 does not inspect memory records, render raw queue sessions or collection items, or provide renderer-controlled transport behavior.

@@ -286,6 +286,39 @@ def test_routes_normalize_invalid_transport_urls(monkeypatch: Any, route: str) -
     assert PRIVATE_ITEM not in response.text
 
 
+def test_overview_enforces_overall_backend_deadline(monkeypatch: Any) -> None:
+    install_connection(monkeypatch)
+    monkeypatch.setattr(plugin_api, "OVERVIEW_BUDGET_SECONDS", 0.01)
+
+    class SlowClient:
+        def __init__(self, **_options: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "SlowClient":
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def get(self, path: str, **_kwargs: Any) -> httpx.Response:
+            await asyncio.sleep(1)
+            return httpx.Response(
+                200,
+                json={"status": "ok"},
+                request=httpx.Request(
+                    "GET",
+                    f"https://honcho.example.invalid{path}",
+                ),
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", SlowClient)
+
+    response = TestClient(make_app(), raise_server_exceptions=False).get("/overview")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "unreachable"
+
+
 @pytest.mark.parametrize(
     "invalid_payload",
     [

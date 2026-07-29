@@ -9,10 +9,10 @@ from typing import NoReturn
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
 APPROVED_SHA256 = {
-    "dashboard/plugin_api.py": "394fcfd3816c9a45b25feab5b532854b221dcdcf1ec53d227e3a439ffc4e4918",
-    "desktop/plugin.ts": "502b9b8b0bdeaf9cde19b239ee5c546c81bbccafa61e87501462ef3096319a51",
+    "dashboard/plugin_api.py": "4f4dd5ce9aa8afa00e8abbe13a9503933e1d501124dd707c9bf836d675821100",
+    "desktop/plugin.ts": "45a770d64d13dd5c59bd1208d8bb0c36481e295fc028ac661833227e4448ecc7",
     "desktop/overview-model.ts": "598020e0a90d69e4b91cbe6be7d7880277751fce3afa875114d4b987a72a67f3",
-    "dist/desktop-plugins/honcho-inspector/plugin.js": "ee847a03243c96f7448b0290fba950589b423873aead38f773f6b4af589e6dbc",
+    "dist/desktop-plugins/honcho-inspector/plugin.js": "8a71a72ba06d868299700c039b08b029c026beeb35e3ab581479dcb47b329372",
 }
 
 
@@ -189,6 +189,11 @@ def verify_dashboard_plugin() -> None:
         fail("Honcho totals must use one fixed peers/sessions/conclusions list loop")
     if 'quote(connection.workspace_label, safe="")' not in source:
         fail("workspace path must remain server-resolved and safely encoded")
+    if (
+        "OVERVIEW_BUDGET_SECONDS = 55.0" not in source
+        or "async with asyncio.timeout(OVERVIEW_BUDGET_SECONDS)" not in source
+    ):
+        fail("Overview backend must enforce the approved overall deadline")
 
 
 def verify_desktop_plugin() -> None:
@@ -215,6 +220,8 @@ def verify_desktop_plugin() -> None:
     if any(token in combined for token in forbidden):
         fail("Desktop runtime contains an unapproved capability")
     required = (
+        "const OVERVIEW_BUDGET_MS = 55_000",
+        "const OVERVIEW_TIMEOUT_MS = OVERVIEW_BUDGET_MS + 10_000",
         'ctx.rest<unknown>("/overview", { timeoutMs: OVERVIEW_TIMEOUT_MS })',
         "useValue(host.state.profile)",
         'queryKey: [PLUGIN_ID, "overview", profile]',
