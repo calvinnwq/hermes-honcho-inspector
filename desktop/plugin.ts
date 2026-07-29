@@ -12,7 +12,7 @@ import {
   type HermesPlugin,
   type PluginContext
 } from "@hermes/plugin-sdk"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { jsx, jsxs } from "react/jsx-runtime"
 
 import {
@@ -23,6 +23,7 @@ import {
   type OverviewWarning
 } from "./overview-model"
 import {
+  canRequestNextSessionPage,
   loadSessionSummary,
   loadSessions,
   sessionListPath,
@@ -208,47 +209,73 @@ function SessionSummaryModal({
   selectedSessionCreatedAt,
   query,
   refresh,
-  close
+  close,
+  restoreFocus
 }: {
   selectedSessionKey: string | null
   selectedSessionCreatedAt: string | undefined
   query: { data: SessionSummaryData | undefined; isError: boolean; isFetching: boolean }
   refresh: () => void
   close: () => void
+  restoreFocus: () => void
 }) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null)
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (selectedSessionKey !== null && dialog !== null && !dialog.open) {
+      dialog.showModal()
+    }
+  }, [selectedSessionKey])
+
   if (selectedSessionKey === null) return null
 
-  return jsx("div", {
-    className: "fixed inset-0 z-(--z-modal-backdrop) pointer-events-auto bg-black/22 backdrop-blur-[0.125rem]",
-    children: jsxs("div", {
-      role: "dialog",
-      "aria-modal": true,
-      "aria-labelledby": "honcho-session-summary-title",
-      "data-slot": "dialog-content",
-      className: "fixed left-1/2 top-1/2 z-(--z-modal) pointer-events-auto grid max-h-[85vh] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-(--stroke-nous) bg-(--ui-chat-bubble-background) p-4 text-[length:var(--conversation-text-font-size)] text-foreground shadow-nous duration-200",
-      children: [
-        jsxs("header", {
-          className: "flex items-start justify-between gap-4",
-          children: [
-            jsxs("div", {
-              className: "grid gap-1",
-              children: [
-                jsx("h2", { id: "honcho-session-summary-title", className: "font-medium", children: "Session summary" }),
-                selectedSessionCreatedAt
-                  ? jsx("p", { className: "text-sm text-(--ui-text-tertiary)", children: new Date(selectedSessionCreatedAt).toLocaleString() })
-                  : null
-              ]
-            }),
-            jsx(Button, { type: "button", variant: "outline", size: "sm", onClick: close, children: "Close" })
-          ]
-        }),
-        jsx(SessionSummaryPanel, {
-          selectedSessionKey,
-          query,
-          refresh
-        })
-      ]
-    })
+  const closeModal = () => {
+    if (dialogRef.current?.open) dialogRef.current.close()
+    close()
+    restoreFocus()
+  }
+
+  return jsxs("dialog", {
+    ref: dialogRef,
+    role: "dialog",
+    "aria-modal": true,
+    "aria-labelledby": "honcho-session-summary-title",
+    "data-slot": "dialog-content",
+    onCancel: (event: { preventDefault(): void }) => {
+      event.preventDefault()
+      closeModal()
+    },
+    className: "fixed left-1/2 top-1/2 z-(--z-modal) m-0 grid max-h-[85vh] w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-(--stroke-nous) bg-(--ui-chat-bubble-background) p-4 text-[length:var(--conversation-text-font-size)] text-foreground shadow-nous duration-200 backdrop:bg-black/22 backdrop:backdrop-blur-[0.125rem]",
+    children: [
+      jsxs("header", {
+        className: "flex items-start justify-between gap-4",
+        children: [
+          jsxs("div", {
+            className: "grid gap-1",
+            children: [
+              jsx("h2", { id: "honcho-session-summary-title", className: "font-medium", children: "Session summary" }),
+              selectedSessionCreatedAt
+                ? jsx("p", { className: "text-sm text-(--ui-text-tertiary)", children: new Date(selectedSessionCreatedAt).toLocaleString() })
+                : null
+            ]
+          }),
+          jsx(Button, {
+            type: "button",
+            variant: "outline",
+            size: "sm",
+            autoFocus: true,
+            onClick: closeModal,
+            children: "Close"
+          })
+        ]
+      }),
+      jsx(SessionSummaryPanel, {
+        selectedSessionKey,
+        query,
+        refresh
+      })
+    ]
   })
 }
 
@@ -285,7 +312,7 @@ function SessionPagination({
         type: "button",
         variant: "outline",
         size: "sm",
-        disabled: disabled || data.page >= data.pages,
+        disabled: disabled || !canRequestNextSessionPage(data),
         onClick: () => setPage(data.page! + 1),
         children: "Next page"
       })
@@ -297,6 +324,7 @@ function SessionSummaries({ ctx, profile }: { ctx: PluginContext; profile: strin
   const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const [summarizedOnly, setSummarizedOnly] = useState(true)
+  const returnFocusRef = useRef<HTMLButtonElement | null>(null)
   useEffect(() => {
     setPage(1)
     setSelectedSessionKey(null)
@@ -419,7 +447,10 @@ function SessionSummaries({ ctx, profile }: { ctx: PluginContext; profile: strin
                         jsx("button", {
                           type: "button",
                           className: `flex items-center justify-between gap-3 rounded-md border p-3 text-left text-sm transition-colors ${selectedSessionKey === session.session_key ? "border-(--ui-focus) bg-(--ui-bg-secondary)" : "border-(--ui-stroke-secondary)"}`,
-                          onClick: () => setSelectedSessionKey(session.session_key),
+                          onClick: (event: { currentTarget: HTMLButtonElement }) => {
+                            returnFocusRef.current = event.currentTarget
+                            setSelectedSessionKey(session.session_key)
+                          },
                           children: [
                             jsxs("span", {
                               className: "grid gap-1",
@@ -445,7 +476,8 @@ function SessionSummaries({ ctx, profile }: { ctx: PluginContext; profile: strin
         selectedSessionCreatedAt,
         query: summaryQuery,
         refresh: () => void summaryQuery.refetch(),
-        close: () => setSelectedSessionKey(null)
+        close: () => setSelectedSessionKey(null),
+        restoreFocus: () => returnFocusRef.current?.focus()
       })
     ]
   })
@@ -488,7 +520,7 @@ function ReadyOverview({ data, ctx, profile }: { data: OverviewData; ctx: Plugin
         ]
       }),
       jsx(WarningList, { warnings: data.warnings }),
-      jsx(SessionSummaries, { ctx, profile }),
+      jsx(SessionSummaries, { ctx, profile }, profile),
       jsx("p", {
         className: "text-xs text-(--ui-text-tertiary)",
         children: `Observed ${new Date(data.observed_at).toLocaleString()}`

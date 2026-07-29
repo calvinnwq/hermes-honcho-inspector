@@ -2,11 +2,20 @@
 """Verify the fixed, read-only Slice 3A Session Summaries runtime contract."""
 
 import ast
+import hashlib
+import re
 import sys
 from pathlib import Path
 from typing import NoReturn
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
+APPROVED_SHA256 = {
+    "dashboard/plugin_api.py": "9f9ffcf9e4d669d4c97ed670580835f8b323d2decd08905ede0a4ce9524f6b8b",
+    "desktop/plugin.ts": "21c702ea84d8e2b60c6a8cb9f2a8b23f9e95baa218f8ff36f4c066d55e219a4d",
+    "desktop/overview-model.ts": "598020e0a90d69e4b91cbe6be7d7880277751fce3afa875114d4b987a72a67f3",
+    "desktop/session-model.ts": "5079576543fae14155847182b0c7024a42d7346dc3e635743d310fe4fcf0c5a2",
+}
+
 
 def fail(message: str) -> NoReturn:
     raise SystemExit(f"read-only verification failed: {message}")
@@ -24,6 +33,12 @@ def read_text(relative: str) -> str:
         return read_bytes(relative).decode("utf-8")
     except UnicodeError as error:
         fail(f"cannot decode {relative}: {error}")
+
+
+def verify_approved_hash(relative: str) -> None:
+    digest = hashlib.sha256(read_bytes(relative)).hexdigest()
+    if digest != APPROVED_SHA256[relative]:
+        fail(f"{relative} differs from the approved Slice 3A runtime")
 
 
 def is_docstring(statement: ast.stmt) -> bool:
@@ -111,9 +126,54 @@ def fixed_recent_sessions_post(call: ast.Call, source: str) -> bool:
     )
 
 
+def http_client_bindings(tree: ast.AST) -> set[str]:
+    bindings: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncWith):
+            for item in node.items:
+                expression = item.context_expr
+                if (
+                    isinstance(expression, ast.Call)
+                    and isinstance(expression.func, ast.Attribute)
+                    and isinstance(expression.func.value, ast.Name)
+                    and expression.func.value.id == "httpx"
+                    and expression.func.attr == "AsyncClient"
+                    and isinstance(item.optional_vars, ast.Name)
+                ):
+                    bindings.add(item.optional_vars.id)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for argument in node.args.args:
+                annotation = argument.annotation
+                if (
+                    isinstance(annotation, ast.Attribute)
+                    and isinstance(annotation.value, ast.Name)
+                    and annotation.value.id == "httpx"
+                    and annotation.attr == "AsyncClient"
+                ):
+                    bindings.add(argument.arg)
+
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in bindings
+                and node.targets[0].id not in bindings
+            ):
+                bindings.add(node.targets[0].id)
+                changed = True
+    return bindings
+
+
 def verify_dashboard_plugin() -> None:
+    verify_approved_hash("dashboard/plugin_api.py")
     source = read_text("dashboard/plugin_api.py")
     tree = ast.parse(source)
+    client_bindings = http_client_bindings(tree)
     routes: list[tuple[str, str]] = []
     client_gets: list[str] = []
     list_posts = 0
@@ -178,13 +238,19 @@ def verify_dashboard_plugin() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if (
                 isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "httpx"
+                and node.func.attr != "AsyncClient"
+            ):
+                fail("dashboard backend contains an unapproved direct HTTP operation")
+            if (
+                isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "router"
                 and node.func.attr == "add_api_route"
             ):
                 fail("dashboard backend may register only declarative fixed routes")
             if node.func.attr in forbidden_client_methods:
                 fail("dashboard backend contains a forbidden HTTP client method")
-            if isinstance(node.func.value, ast.Name) and node.func.value.id == "client":
+            if isinstance(node.func.value, ast.Name) and node.func.value.id in client_bindings:
                 if node.func.attr == "get":
                     if len(node.args) != 1 or node.keywords:
                         fail("Honcho GET operations must have fixed argument shapes")
@@ -234,6 +300,13 @@ def verify_dashboard_plugin() -> None:
 
 
 def verify_desktop_plugin() -> None:
+    for relative in (
+        "desktop/plugin.ts",
+        "desktop/overview-model.ts",
+        "desktop/session-model.ts",
+    ):
+        verify_approved_hash(relative)
+
     source = read_text("desktop/plugin.ts")
     model = read_text("desktop/overview-model.ts")
     session_model = read_text("desktop/session-model.ts")
@@ -254,6 +327,8 @@ def verify_desktop_plugin() -> None:
     )
     if any(token in combined for token in forbidden):
         fail("Desktop runtime contains an unapproved capability")
+    if re.search(r"(?<![\w$])fetch\s*(?:<[^>]*>)?\s*\(", combined):
+        fail("Desktop runtime contains an unapproved capability")
     required = (
         "const OVERVIEW_BUDGET_MS = 55_000",
         "const OVERVIEW_TIMEOUT_MS = OVERVIEW_BUDGET_MS + 10_000",
@@ -266,6 +341,10 @@ def verify_desktop_plugin() -> None:
         'queryKey: [PLUGIN_ID, "session-summary", profile, selectedSessionKey]',
         "function SessionPagination",
         "function SessionSummaryModal",
+        "dialog.showModal()",
+        "onCancel:",
+        "autoFocus: true",
+        "returnFocusRef.current?.focus()",
         'role: "dialog"',
         '"aria-modal": true',
         "bg-(--ui-chat-bubble-background)",
@@ -274,6 +353,7 @@ def verify_desktop_plugin() -> None:
         "Derived summary",
         "Evidence: ${EVIDENCE_COPY[status]}",
         "exact claim-to-message attribution",
+        "jsx(SessionSummaries, { ctx, profile }, profile)",
         "useValue(host.state.profile)",
         "ctx.registerMany(",
         "area: ROUTES_AREA",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  canRequestNextSessionPage,
   loadSessionSummary,
   loadSessions,
   normalizeSessionSummary,
@@ -80,6 +81,30 @@ describe("Session Summaries renderer model", () => {
     expect(() => sessionListPath(1_001)).toThrow()
   })
 
+  it("accepts large upstream page counts without requesting beyond the fixed bound", () => {
+    const firstPage = normalizeSessions({
+      ...sessionsPayload,
+      total: 20_001,
+      pages: 1_001
+    })
+    const lastSupportedPage = normalizeSessions({
+      ...sessionsPayload,
+      items: Array.from({ length: 20 }, (_, index) => ({
+        session_key: `synthetic-session-${index}`,
+        is_active: false,
+        created_at: "2026-07-29T09:00:00Z"
+      })),
+      total: 20_001,
+      page: 1_000,
+      pages: 1_001
+    })
+
+    expect(firstPage.state).toBe("ready")
+    expect(canRequestNextSessionPage(firstPage)).toBe(true)
+    expect(lastSupportedPage.state).toBe("ready")
+    expect(canRequestNextSessionPage(lastSupportedPage)).toBe(false)
+  })
+
   it("loads one summary through the fixed route with an encoded selector", async () => {
     const paths: string[] = []
     const result = await loadSessionSummary(() => {
@@ -118,9 +143,21 @@ describe("Session Summaries renderer model", () => {
     expect(source).toContain("function SessionSummaryModal")
     expect(source).toContain('role: "dialog"')
     expect(source).toContain('"aria-modal": true')
+    expect(source).toContain("dialog.showModal()")
+    expect(source).toContain("onCancel:")
+    expect(source).toContain("autoFocus: true")
+    expect(source).toContain("returnFocusRef.current?.focus()")
     expect(source).toContain("bg-(--ui-chat-bubble-background)")
     expect(source).toContain("border-(--stroke-nous)")
     expect(source).toContain("shadow-nous")
+  })
+
+  it("remounts session state when the active profile changes", async () => {
+    const source = await import("node:fs/promises").then(fs =>
+      fs.readFile(new URL("../../desktop/plugin.ts", import.meta.url), "utf8")
+    )
+
+    expect(source).toContain("jsx(SessionSummaries, { ctx, profile }, profile)")
   })
 
   it.each([

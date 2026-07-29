@@ -85,6 +85,7 @@ def test_readonly_verifier_rejects_executable_parameter_annotations(tmp_path: Pa
             '\nimport subprocess\nsubprocess.run(["false"], check=False)\n',
         ),
         ("desktop/plugin.ts", '\nglobalThis["fetch"]("https://example.invalid")\n'),
+        ("desktop/plugin.ts", '\nfetch("https://example.invalid")\n'),
         ("desktop/plugin.ts", "\nnew XMLHttpRequest()\n"),
         (
             "desktop/plugin.ts",
@@ -110,6 +111,27 @@ def test_readonly_verifier_rejects_runtime_capabilities(
     candidate = copy_runtime(tmp_path)
     target = candidate / relative
     target.write_text(target.read_text(encoding="utf-8") + mutation, encoding="utf-8")
+    result = run_verifier(candidate)
+
+    assert result.returncode != 0
+    assert "read-only verification failed" in result.stderr + result.stdout
+
+
+def test_readonly_verifier_rejects_aliased_http_client_mutation(tmp_path: Path) -> None:
+    candidate = copy_runtime(tmp_path)
+    target = candidate / "dashboard/plugin_api.py"
+    source = target.read_text(encoding="utf-8")
+    approved = 'response = await client.get("/health")'
+    assert approved in source
+    target.write_text(
+        source.replace(
+            approved,
+            'alias = client\n            response = await alias.post("/health")',
+            1,
+        ),
+        encoding="utf-8",
+    )
+
     result = run_verifier(candidate)
 
     assert result.returncode != 0

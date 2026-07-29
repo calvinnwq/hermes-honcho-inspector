@@ -154,7 +154,6 @@ export function normalizeSessions(value: unknown, fallbackObservedAt = new Date(
     || value.page < 1
     || value.page > MAX_SESSION_PAGE
     || !isCount(value.pages)
-    || value.pages > MAX_SESSION_PAGE
     || value.page > Math.max(value.pages, 1)
     || normalizedItems.length > value.total
     || (value.total === 0 && normalizedItems.length !== 0)
@@ -172,6 +171,13 @@ export function normalizeSessions(value: unknown, fallbackObservedAt = new Date(
     observed_at: value.observed_at,
     warnings
   }
+}
+
+export function canRequestNextSessionPage(data: Pick<SessionsData, "page" | "pages">): boolean {
+  return data.page !== null
+    && data.pages !== null
+    && data.page < data.pages
+    && data.page < MAX_SESSION_PAGE
 }
 
 export function sessionListPath(page: number, summarizedOnly = false): string {
