@@ -9,14 +9,14 @@ Its fixed upstream adapter uses `GET /health`, `GET /v3/workspaces/{workspace}/q
 The Desktop Overview calls only the plugin-scoped `ctx.rest("/overview")` route and lets the user refresh the current state.
 The Session Summaries view calls only the fixed plugin-scoped `/sessions?page={page}`, `/sessions-with-summaries?page={page}`, and `/session-summary?session_id={session_id}` routes.
 The session list is bounded to 20 items per page and provides explicit previous and next controls when more sessions exist.
-The default Summarised only view checks the 20 sessions on the selected page through Honcho's fixed per-session summaries endpoint and excludes sessions without a generated summary.
+The default Summarised only view checks up to 20 sessions on the selected page through Honcho's fixed per-session summaries endpoint and excludes sessions without a generated summary.
 Pagination remains based on Honcho's session pages, so an empty filtered page is possible and is labelled as such.
 Selecting a session opens its summary in a dedicated modal rather than appending detail below the session list.
 Missing summaries are shown as unavailable evidence, while populated summaries are labelled as Honcho-derived context rather than exact source proof.
 The backend enforces a 55-second overall Overview budget, and the Desktop route allows 10 seconds of delivery headroom before its 65-second deadline.
 Pending or in-progress queue work is presented as normal processing activity rather than data corruption or failure.
 Slice 3A reports `supported_contract` as static project support metadata and `contract_verified: false`; the unversioned health response proves reachability only and does not verify the Honcho API version.
-Slice 3A does not render raw messages, expose source identifiers, or provide renderer-controlled transport behavior.
+Slice 3A does not render raw messages, expose summary source identifiers, or provide renderer-controlled transport behavior.
 
 ## Product boundary
 
