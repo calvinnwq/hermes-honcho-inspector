@@ -11,12 +11,28 @@ beforeAll(() => {
 })
 
 describe("Desktop release bundle", () => {
-  it("contains the approved opt-in plugin identity", () => {
+  it("contains the approved opt-in plugin identity and Overview contributions", () => {
     const bundle = readFileSync(bundlePath, "utf8")
 
     expect(bundle).toContain('var PLUGIN_ID = "honcho-inspector"')
     expect(bundle).toContain("id: PLUGIN_ID")
     expect(bundle).toContain("defaultEnabled: false")
+    expect(bundle).toContain('var OVERVIEW_PATH = "/honcho-inspector"')
+    expect(bundle).toContain('label: "Honcho Inspector"')
+    expect(bundle).toContain('ctx.rest("/overview", {')
+    expect(bundle).toContain("var OVERVIEW_BUDGET_MS = 55e3")
+    expect(bundle).toContain("var OVERVIEW_TIMEOUT_MS = OVERVIEW_BUDGET_MS + 1e4")
+    expect(bundle).toContain("timeoutMs: OVERVIEW_TIMEOUT_MS")
+    expect(bundle).toContain("ctx.registerMany")
+    expect(bundle).toContain("useValue(host.state.profile)")
+    expect(bundle).toContain('[PLUGIN_ID, "overview", profile]')
+  })
+
+  it("renders request failures before the empty loading fallback", () => {
+    const bundle = readFileSync(bundlePath, "utf8")
+
+    expect(bundle.indexOf("if (query.isError)"))
+      .toBeLessThan(bundle.indexOf("if (query.isLoading"))
   })
 
   it("contains only supported runtime import specifiers", () => {

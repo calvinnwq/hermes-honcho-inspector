@@ -49,7 +49,9 @@ const copies = new Map([
   ["compatibility.json", "compatibility.json"]
 ])
 
-for (const source of [...copies.keys(), "desktop/plugin.ts"]) {
+const bundleInputs = ["desktop/plugin.ts", "desktop/overview-model.ts"]
+
+for (const source of [...copies.keys(), ...bundleInputs]) {
   const input = join(sourceRoot, source)
   await rejectSymlinkComponents(dirname(input), "source")
   const status = await lstat(input)
@@ -78,6 +80,7 @@ await build({
   legalComments: "none",
   sourcemap: false,
   treeShaking: true,
+  external: ["@hermes/plugin-sdk", "react", "react/jsx-runtime"],
   logLevel: "silent"
 })
 
