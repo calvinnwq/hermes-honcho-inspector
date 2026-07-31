@@ -28,6 +28,24 @@ def install_connection(monkeypatch: Any) -> None:
     monkeypatch.setattr(plugin_api, "resolve_connection", lambda: connection)
 
 
+def test_public_summary_normalizes_honcho_summary_types() -> None:
+    for upstream_type, public_type in (
+        ("honcho_chat_summary_short", "short"),
+        ("honcho_chat_summary_long", "long"),
+    ):
+        summary = plugin_api._UpstreamSummary.model_validate(
+            {
+                "content": "Synthetic generated context.",
+                "message_id": "synthetic-source-message",
+                "summary_type": upstream_type,
+                "created_at": "2026-07-29T09:05:00Z",
+                "token_count": 4,
+            }
+        )
+
+        assert plugin_api._public_summary(summary).summary_type == public_type
+
+
 def test_sessions_returns_recent_bounded_items_without_upstream_payload(
     monkeypatch: Any,
 ) -> None:
@@ -250,11 +268,17 @@ def test_summarized_sessions_returns_only_items_with_generated_summaries(
                     "short_summary": {
                         "content": "Synthetic generated context.",
                         "message_id": "synthetic-source-message",
-                        "summary_type": "short",
+                        "summary_type": "honcho_chat_summary_short",
                         "created_at": "2026-07-29T09:05:00Z",
                         "token_count": 4,
                     },
-                    "long_summary": None,
+                    "long_summary": {
+                        "content": "Synthetic long generated context.",
+                        "message_id": "synthetic-source-message-long",
+                        "summary_type": "honcho_chat_summary_long",
+                        "created_at": "2026-07-29T09:06:00Z",
+                        "token_count": 6,
+                    },
                 },
                 request=httpx.Request("GET", f"https://honcho.example.invalid{path}"),
             )
@@ -318,7 +342,7 @@ def test_session_summary_returns_derived_context_without_source_provenance(
                     "id": "synthetic-session/with?unsafe",
                     "short_summary": {
                         "content": "Honcho derived context for a synthetic session.",
-                        "summary_type": "short",
+                        "summary_type": "honcho_chat_summary_short",
                         "created_at": "2026-07-29T09:05:00Z",
                         "token_count": 12,
                         "message_id": "synthetic-source-message",
@@ -471,7 +495,7 @@ def test_session_summary_truncates_public_summary_content(monkeypatch: Any) -> N
                     "id": "synthetic-session-with-long-summary",
                     "short_summary": {
                         "content": long_content,
-                        "summary_type": "short",
+                        "summary_type": "honcho_chat_summary_short",
                         "created_at": "2026-07-29T09:05:00Z",
                         "token_count": 12,
                         "message_id": "synthetic-source-message",

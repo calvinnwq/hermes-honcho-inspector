@@ -44,6 +44,12 @@ OverviewWarning = Literal[
 ]
 SafeCount = Annotated[int, Field(strict=True, ge=0, le=MAX_SAFE_COUNT)]
 EvidenceStatus = Literal["verified", "context", "unavailable"]
+UpstreamSummaryType = Literal[
+    "short",
+    "long",
+    "honcho_chat_summary_short",
+    "honcho_chat_summary_long",
+]
 
 
 class CapabilityFeatures(BaseModel):
@@ -233,7 +239,7 @@ class _UpstreamSummary(BaseModel):
 
     content: Annotated[str, Field(strict=True, min_length=1, max_length=MAX_UPSTREAM_SUMMARY_CHARS)]
     message_id: Annotated[str, Field(strict=True, min_length=1, max_length=MAX_SESSION_ID_CHARS)]
-    summary_type: Literal["short", "long"]
+    summary_type: UpstreamSummaryType
     created_at: datetime
     token_count: SafeCount
 
@@ -718,7 +724,11 @@ def _public_summary(summary: _UpstreamSummary) -> SessionSummaryItem:
     content = summary.content[:MAX_PUBLIC_SUMMARY_CHARS]
     return SessionSummaryItem(
         content=content,
-        summary_type=summary.summary_type,
+        summary_type=(
+            "short"
+            if summary.summary_type in {"short", "honcho_chat_summary_short"}
+            else "long"
+        ),
         created_at=summary.created_at,
         token_count=summary.token_count,
         truncated=len(summary.content) > MAX_PUBLIC_SUMMARY_CHARS,

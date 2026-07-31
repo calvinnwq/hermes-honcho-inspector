@@ -10,7 +10,7 @@ from typing import NoReturn
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
 APPROVED_SHA256 = {
-    "dashboard/plugin_api.py": "9f9ffcf9e4d669d4c97ed670580835f8b323d2decd08905ede0a4ce9524f6b8b",
+    "dashboard/plugin_api.py": "6fe45190290c15dcfab01a7a2a7c0b06a746546b46120e00fa717db6cbfe5bf8",
     "desktop/plugin.ts": "21c702ea84d8e2b60c6a8cb9f2a8b23f9e95baa218f8ff36f4c066d55e219a4d",
     "desktop/overview-model.ts": "598020e0a90d69e4b91cbe6be7d7880277751fce3afa875114d4b987a72a67f3",
     "desktop/session-model.ts": "5079576543fae14155847182b0c7024a42d7346dc3e635743d310fe4fcf0c5a2",
