@@ -10,10 +10,11 @@ from typing import NoReturn
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
 APPROVED_SHA256 = {
-    "dashboard/plugin_api.py": "6fe45190290c15dcfab01a7a2a7c0b06a746546b46120e00fa717db6cbfe5bf8",
-    "desktop/plugin.ts": "21c702ea84d8e2b60c6a8cb9f2a8b23f9e95baa218f8ff36f4c066d55e219a4d",
+    "dashboard/plugin_api.py": "642fc3f1f6d98a1d0e7f6c7ed747d774b5d71e4c4cb66358054a90ec0a723e4f",
+    "desktop/plugin.ts": "f8f90a2c7b4b06d21707e50236694ced401b9f134c1b94956a3f7e1afd41a47d",
     "desktop/overview-model.ts": "598020e0a90d69e4b91cbe6be7d7880277751fce3afa875114d4b987a72a67f3",
     "desktop/session-model.ts": "5079576543fae14155847182b0c7024a42d7346dc3e635743d310fe4fcf0c5a2",
+    "desktop/profile-path.ts": "1fd2571346b2778a69d11808e6ce2feb6f147d80e852bbe28ad7db893171f02b",
 }
 
 
@@ -304,14 +305,16 @@ def verify_desktop_plugin() -> None:
         "desktop/plugin.ts",
         "desktop/overview-model.ts",
         "desktop/session-model.ts",
+        "desktop/profile-path.ts",
     ):
         verify_approved_hash(relative)
 
     source = read_text("desktop/plugin.ts")
     model = read_text("desktop/overview-model.ts")
     session_model = read_text("desktop/session-model.ts")
+    profile_path = read_text("desktop/profile-path.ts")
     bundle = read_text("dist/desktop-plugins/honcho-inspector/plugin.js")
-    combined = "\n".join((source, model, session_model, bundle))
+    combined = "\n".join((source, model, session_model, profile_path, bundle))
     forbidden = (
         "host.request",
         "globalThis[\"fetch\"]",
@@ -333,9 +336,10 @@ def verify_desktop_plugin() -> None:
         "const OVERVIEW_BUDGET_MS = 55_000",
         "const OVERVIEW_TIMEOUT_MS = OVERVIEW_BUDGET_MS + 10_000",
         "const SESSION_VIEW_TIMEOUT_MS = 30_000",
-        'ctx.rest<unknown>("/overview", { timeoutMs: OVERVIEW_TIMEOUT_MS })',
+        'ctx.rest<unknown>(profilePath("/overview", profile), { timeoutMs: OVERVIEW_TIMEOUT_MS })',
+        "profilePath(sessionListPath(page, summarizedOnly), profile)",
         "sessionListPath(page, summarizedOnly)",
-        "`/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`",
+        "profilePath(`/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`, profile)",
         'queryKey: [PLUGIN_ID, "overview", profile]',
         'queryKey: [PLUGIN_ID, "sessions", profile, page, summarizedOnly ? "summarized" : "all"]',
         'queryKey: [PLUGIN_ID, "session-summary", profile, selectedSessionKey]',
@@ -360,7 +364,7 @@ def verify_desktop_plugin() -> None:
         "area: SIDEBAR_NAV_AREA",
         "area: PALETTE_AREA",
         'const OVERVIEW_PATH = "/honcho-inspector"',
-        "defaultEnabled: false",
+        "defaultEnabled: true",
     )
     if any(token not in source for token in required):
         fail("Desktop source differs from the fixed Overview contribution contract")

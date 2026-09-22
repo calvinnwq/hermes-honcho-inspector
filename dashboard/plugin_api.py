@@ -380,14 +380,43 @@ def resolve_connection() -> _Connection | CapabilityResponse:
     )
 
 
+def _config_profile_scope(profile: str):
+    """Return Hermes's await-safe config and secret scope for one profile."""
+
+    from importlib import import_module
+
+    hermes_profile_scope = getattr(
+        import_module("hermes_cli.web_server_profiles"),
+        "_config_profile_scope",
+    )
+    return hermes_profile_scope(profile)
+
+
+def _resolve_connection_for_profile(profile: str | None) -> _Connection | CapabilityResponse:
+    """Resolve Honcho using the profile selected by the Desktop request."""
+
+    if profile is None:
+        return resolve_connection()
+
+    try:
+        with _config_profile_scope(profile):
+            return resolve_connection()
+    except (ImportError, AttributeError):
+        # Older/headless hosts without Hermes's profile-scope helper must fail closed
+        # rather than accidentally reading the process's default profile.
+        return _capability("missing-configuration")
+
+
 router = APIRouter()
 
 
 @router.get("/capabilities", response_model=CapabilityResponse)
-async def capabilities() -> CapabilityResponse:
-    """Report whether the configured Honcho connection passes the fixed health probe."""
+async def capabilities(
+    profile: str | None = Query(default=None),
+) -> CapabilityResponse:
+    """Report whether the selected profile's Honcho connection passes the fixed health probe."""
 
-    connection = resolve_connection()
+    connection = _resolve_connection_for_profile(profile)
     if isinstance(connection, CapabilityResponse):
         return connection
 
@@ -467,10 +496,12 @@ def _overview_failure(
 
 
 @router.get("/overview", response_model=OverviewResponse)
-async def overview() -> OverviewResponse:
-    """Return fixed workspace aggregates without exposing upstream records."""
+async def overview(
+    profile: str | None = Query(default=None),
+) -> OverviewResponse:
+    """Return fixed workspace aggregates for the selected profile."""
 
-    connection = resolve_connection()
+    connection = _resolve_connection_for_profile(profile)
     if isinstance(connection, CapabilityResponse):
         return _overview_state(connection.state)
 
@@ -597,10 +628,11 @@ async def _fetch_session_summary(
 @router.get("/sessions", response_model=SessionListResponse)
 async def sessions(
     page: Annotated[int, Query(ge=1, le=MAX_SESSION_PAGE)] = 1,
+    profile: str | None = Query(default=None),
 ) -> SessionListResponse:
-    """Return one fixed, bounded page of recent sessions."""
+    """Return one fixed, bounded page of recent sessions for the selected profile."""
 
-    connection = resolve_connection()
+    connection = _resolve_connection_for_profile(profile)
     if isinstance(connection, CapabilityResponse):
         return _session_list_failure(connection.state, mode="all")
 
@@ -645,10 +677,11 @@ async def sessions(
 @router.get("/sessions-with-summaries", response_model=SessionListResponse)
 async def sessions_with_summaries(
     page: Annotated[int, Query(ge=1, le=MAX_SESSION_PAGE)] = 1,
+    profile: str | None = Query(default=None),
 ) -> SessionListResponse:
-    """Return only summarized sessions from one bounded recent-session page."""
+    """Return only summarized sessions for the selected profile."""
 
-    connection = resolve_connection()
+    connection = _resolve_connection_for_profile(profile)
     if isinstance(connection, CapabilityResponse):
         return _session_list_failure(connection.state, mode="summarized")
 
@@ -738,13 +771,14 @@ def _public_summary(summary: _UpstreamSummary) -> SessionSummaryItem:
 @router.get("/session-summary", response_model=SessionSummaryResponse)
 async def session_summary(
     session_id: str = Query(min_length=1, max_length=MAX_SESSION_ID_CHARS),
+    profile: str | None = Query(default=None),
 ) -> SessionSummaryResponse:
-    """Return one bounded derived summary for a validated session selector."""
+    """Return one bounded derived summary for a selected profile and session."""
 
     if any(ord(character) < 32 or ord(character) == 127 for character in session_id):
         return _session_summary_response("unsupported-contract")
 
-    connection = resolve_connection()
+    connection = _resolve_connection_for_profile(profile)
     if isinstance(connection, CapabilityResponse):
         return _session_summary_response(connection.state)
 

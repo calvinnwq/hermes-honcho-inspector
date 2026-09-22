@@ -13,6 +13,7 @@ RUNTIME_FILES = (
     "desktop/plugin.ts",
     "desktop/overview-model.ts",
     "desktop/session-model.ts",
+    "desktop/profile-path.ts",
     "dist/desktop-plugins/honcho-inspector/plugin.js",
 )
 
@@ -203,7 +204,7 @@ def test_readonly_verifier_rejects_aliased_http_client_mutation(tmp_path: Path) 
         ),
         (
             "desktop/plugin.ts",
-            'ctx.rest<unknown>("/overview", { timeoutMs: OVERVIEW_TIMEOUT_MS })',
+            'ctx.rest<unknown>(profilePath("/overview", profile), { timeoutMs: OVERVIEW_TIMEOUT_MS })',
             'ctx.rest<unknown>("/proxy")',
         ),
         (
@@ -213,7 +214,7 @@ def test_readonly_verifier_rejects_aliased_http_client_mutation(tmp_path: Path) 
         ),
         (
             "desktop/plugin.ts",
-            "`/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`",
+            "profilePath(`/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`, profile)",
             '"/proxy"',
         ),
         (
