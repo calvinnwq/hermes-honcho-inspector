@@ -20,6 +20,7 @@ BUILD_INPUTS = (
     "desktop/plugin.ts",
     "desktop/overview-model.ts",
     "desktop/session-model.ts",
+    "desktop/profile-path.ts",
     "INSTALL.md",
     "LICENSE",
     "compatibility.json",

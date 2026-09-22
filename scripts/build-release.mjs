@@ -49,7 +49,7 @@ const copies = new Map([
   ["compatibility.json", "compatibility.json"]
 ])
 
-const bundleInputs = ["desktop/plugin.ts", "desktop/overview-model.ts", "desktop/session-model.ts"]
+const bundleInputs = ["desktop/plugin.ts", "desktop/overview-model.ts", "desktop/session-model.ts", "desktop/profile-path.ts"]
 
 for (const source of [...copies.keys(), ...bundleInputs]) {
   const input = join(sourceRoot, source)

@@ -22,6 +22,7 @@ import {
   type OverviewData,
   type OverviewWarning
 } from "./overview-model"
+import { profilePath } from "./profile-path"
 import {
   canRequestNextSessionPage,
   loadSessionSummary,
@@ -340,7 +341,7 @@ function SessionSummaries({ ctx, profile }: { ctx: PluginContext; profile: strin
   const sessionsQuery = useQuery<SessionsData>({
     queryKey: [PLUGIN_ID, "sessions", profile, page, summarizedOnly ? "summarized" : "all"],
     queryFn: () => loadSessions(() =>
-      ctx.rest<unknown>(sessionListPath(page, summarizedOnly), { timeoutMs: SESSION_VIEW_TIMEOUT_MS })
+      ctx.rest<unknown>(profilePath(sessionListPath(page, summarizedOnly), profile), { timeoutMs: SESSION_VIEW_TIMEOUT_MS })
     ),
     retry: false
   })
@@ -356,7 +357,7 @@ function SessionSummaries({ ctx, profile }: { ctx: PluginContext; profile: strin
         } satisfies SessionSummaryData)
       : loadSessionSummary(() =>
           ctx.rest<unknown>(
-            `/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`,
+            profilePath(`/session-summary?session_id=${encodeURIComponent(selectedSessionKey)}`, profile),
             { timeoutMs: SESSION_VIEW_TIMEOUT_MS }
           )
         ),
@@ -552,7 +553,7 @@ function OverviewPage({ ctx }: { ctx: PluginContext }) {
   const query = useQuery<OverviewData>({
     queryKey: [PLUGIN_ID, "overview", profile],
     queryFn: () => loadOverview(() =>
-      ctx.rest<unknown>("/overview", { timeoutMs: OVERVIEW_TIMEOUT_MS })
+      ctx.rest<unknown>(profilePath("/overview", profile), { timeoutMs: OVERVIEW_TIMEOUT_MS })
     ),
     retry: false
   })
@@ -590,7 +591,7 @@ function OverviewPage({ ctx }: { ctx: PluginContext }) {
 const plugin: HermesPlugin = {
   id: PLUGIN_ID,
   name: "Honcho Inspector",
-  defaultEnabled: false,
+  defaultEnabled: true,
   register(ctx) {
     ctx.registerMany([
       {

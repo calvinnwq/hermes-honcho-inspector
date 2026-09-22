@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,48 @@ def make_app() -> FastAPI:
     app = FastAPI()
     app.include_router(plugin_api.router)
     return app
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/capabilities",
+        "/overview",
+        "/sessions",
+        "/sessions-with-summaries",
+        "/session-summary?session_id=synthetic-session",
+    ],
+)
+def test_routes_scope_connection_resolution_to_requested_profile(
+    monkeypatch: Any,
+    path: str,
+) -> None:
+    scopes: list[tuple[str, str]] = []
+
+    @contextmanager
+    def fake_profile_scope(profile: str):
+        scopes.append(("enter", profile))
+        try:
+            yield
+        finally:
+            scopes.append(("exit", profile))
+
+    def fake_resolve_connection() -> plugin_api.CapabilityResponse:
+        assert scopes == [("enter", "synthetic-profile")]
+        return plugin_api._capability("disabled")
+
+    monkeypatch.setattr(plugin_api, "_config_profile_scope", fake_profile_scope, raising=False)
+    monkeypatch.setattr(plugin_api, "resolve_connection", fake_resolve_connection)
+
+    separator = "&" if "?" in path else "?"
+    response = TestClient(make_app()).get(f"{path}{separator}profile=synthetic-profile")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "disabled"
+    assert scopes == [
+        ("enter", "synthetic-profile"),
+        ("exit", "synthetic-profile"),
+    ]
 
 
 def install_connection(monkeypatch: Any) -> None:

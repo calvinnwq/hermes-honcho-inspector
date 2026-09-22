@@ -11,15 +11,15 @@ beforeAll(() => {
 })
 
 describe("Desktop release bundle", () => {
-  it("contains the approved opt-in plugin identity and Overview contributions", () => {
+  it("contains the approved plugin identity and Overview contributions", () => {
     const bundle = readFileSync(bundlePath, "utf8")
 
     expect(bundle).toContain('var PLUGIN_ID = "honcho-inspector"')
     expect(bundle).toContain("id: PLUGIN_ID")
-    expect(bundle).toContain("defaultEnabled: false")
+    expect(bundle).toContain("defaultEnabled: true")
     expect(bundle).toContain('var OVERVIEW_PATH = "/honcho-inspector"')
     expect(bundle).toContain('label: "Honcho Inspector"')
-    expect(bundle).toContain('ctx.rest("/overview", {')
+    expect(bundle).toContain('profilePath("/overview", profile)')
     expect(bundle).toContain("var OVERVIEW_BUDGET_MS = 55e3")
     expect(bundle).toContain("var OVERVIEW_TIMEOUT_MS = OVERVIEW_BUDGET_MS + 1e4")
     expect(bundle).toContain("timeoutMs: OVERVIEW_TIMEOUT_MS")
